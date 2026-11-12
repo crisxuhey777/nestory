@@ -88,6 +88,7 @@ def config() -> dict:
         if value is not None and value.strip():
             cfg[field] = value.strip()
     cfg["endpoint"] = cfg["endpoint"].rstrip("/")
+    cfg["bucket"] = cfg["bucket"].strip("/")
     cfg["prefix"] = cfg["prefix"].strip("/")
     cfg["cdn_base"] = cfg["cdn_base"].rstrip("/")
     return cfg
@@ -161,7 +162,7 @@ def _uri_encode(value: str, safe: str = "") -> str:
 
 
 def _canonical_uri(key: str) -> str:
-    return "/" + "/".join(_uri_encode(seg) for seg in key.split("/"))
+    return "/" + "/".join(_uri_encode(seg) for seg in key.lstrip("/").split("/"))
 
 
 def _host(cfg: dict) -> str:

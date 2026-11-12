@@ -46,34 +46,57 @@ users / sessions / user_state / media 四张表会自动建出来，不用手动
 
 `backend/db.env`、`backend/llm.env` 已被 `.gitignore` 和 `.dockerignore` 排除，不会进镜像。
 
-## 3. 两条上线路线
+## 3. 已经走通的路线：sealos-skills 插件 + Template API
 
-### A. Sealos 2.0 网页版（不需要本机 Docker）
+Sealos 网页版 2.0 也能贴仓库，但仓库是 private 时要授权 GitHub App；下面这条是本项目实际用过的、
+可重复执行的路径（不依赖 `kubectl`，只走 443 上的 Template API）。
 
-1. 登录 <https://sealos.io>，新用户有 7 天试用。
-2. 新建项目 → 连接 GitHub → 选 `crisxuhey777/nestory`。
-   - 仓库现在是 **private**：要么在该页面授权 Sealos 的 GitHub App，要么把仓库临时改成 public
-     （已确认仓库里只有 `db.env.example` / `llm.env.example`，没有真实密钥）。
-3. 它会读根目录的 `Dockerfile` 构建镜像，再让你加一个 MySQL（或自动建），把第 2 节的变量填进去。
-4. 部署完拿到的 https 域名就是 Nestory 的正式地址；`NESTORY_COOKIE_SECURE=1`。
-
-### B. 本机构建 + 推镜像（需要 Docker）
+前置：`C:\Users\crist\.dsh\sealos-skills`（sealos 插件 v2.0.0；若缺依赖，在里面跑
+`node "D:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" install --omit=dev`）。
+下文命令都在 `C:\Users\crist\.dsh\sealos-skills\plugins\sealos\skills\use-sealos` 下执行。
 
 ```powershell
-docker build -t ghcr.io/crisxuhey777/nestory:0.1 .
-gh auth token | docker login ghcr.io -u crisxuhey777 --password-stdin
-docker push ghcr.io/crisxuhey777/nestory:0.1
+$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'
+
+# 1) 登录（OAuth2 device flow，浏览器里输一次码）
+python scripts/sealos-api.py login
+
+# 2) 构建并推镜像（linux/amd64）
+docker buildx build --platform linux/amd64 -t ghcr.io/crisxuhey777/nestory:<tag> --push .
+
+# 3) 部署（模板在仓库 .sealos/template.yaml，密钥参数在 .sealos/args.json，均不入库）
+python scripts/sealos-api.py deploy D:\OneDrive\桌面\NESTORY\.sealos\deploy.yaml `
+  --args-file D:\OneDrive\桌面\NESTORY\.sealos\args.json
 ```
 
-然后在 Sealos 用「Docker 镜像」方式起应用，暴露 8000，环境变量同第 2 节。
+要点：
 
-> 本机现状（2026-11-12 核实）：Windows 10 **家庭版**，WSL 没装，Docker Desktop 起不来
-> （`Docker Desktop is unable to start`）。要用 B 路线得先 `wsl --install`（需要管理员 + 重启一次）。
+- **必须 `PYTHONUTF8=1`**，否则脚本用系统编码读 YAML 会 `UnicodeDecodeError: 'charmap' codec`。
+- 每次 `deploy` 都会新建一个带随机后缀的实例（`nestory-<random8>`），**数据是全新的**；
+  要覆盖旧实例先 `python scripts/sealos-api.py delete <实例名>`（返回 204）。
+- 公网域名 = `https://<app_host>.usw-1.sealos.app`（`SEALOS_CLOUD_DOMAIN` 是 `usw-1.sealos.app`，
+  不是 `.io`；`.io` 下返回 404）。`app_host` 随机，部署后从实例详情取：
+  `GET https://template.usw-1.sealos.io/api/instance/list`，`Authorization` 头放 urlquote 后的 kubeconfig，
+  读 `spec.defaults.app_host.value`。
+- GHCR 包是私有的（OAuth token 改不了可见性，`PATCH /user/packages` 一律 404），所以模板里挂了
+  `imagePullSecrets: [{name: <app_name>}]` + 一个 `kubernetes.io/dockerconfigjson` Secret，
+  它由 `gh auth token` 现场拼出来写进 `.sealos/deploy.yaml`（该文件含凭据，已 gitignore）。
+- 模板里 MySQL 是 KubeBlocks 集群（`nestory-mysql`），首次要等 2–4 分钟才 ready；应用启动时
+  用后台线程等库（`NESTORY_DB_WAIT`，默认 600s）并自动建表，探针不会提前把 pod 杀掉。
+
+### 当前线上实例（2026-11-12）
+
+- 地址：<https://nestory-qdknrlol.usw-1.sealos.app>
+- 实例：`nestory-wmmuakji`，镜像 `ghcr.io/crisxuhey777/nestory:0.3.3`
+- `GET /api/health` → `db.ok=true`，AI 走 `glm-4-flash`
+- 媒体：Sealos 对象存储桶（private，path-style，`NESTORY_S3_*` 由模板注入）
+- 验证：`_smoke_deployed.py`（接口全链路）+ 浏览器 e2e 相册 20/20、设置 26/26
 
 ## 4. 上线后要核对的
 
 - `GET https://<域名>/api/health` → `{"status":"ok", "db":{"ok":true}}`
 - 注册 → 登录 → 记一条成长记录 → 刷新页面数据还在
+- 上传一张照片，`/api/media/blob/<id>` 能打开（直传 S3 + confirm 成功）
 - 浏览器 Cookie 里 `nestory_session` 带 `Secure`（说明 HTTPS 生效）
 - AI 摘要页能出内容（`/api/ai/summary` 走智谱）
 

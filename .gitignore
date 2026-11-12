@@ -23,3 +23,7 @@ Thumbs.db
 __pycache__/
 *.pyc
 .venv/
+
+# sealos deploy artifacts (args.json 含 LLM key，deploy.yaml 含镜像拉取凭据)
+.sealos/args.json
+.sealos/deploy.yaml

@@ -30,6 +30,7 @@ import mimetypes
 import os
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -137,7 +138,12 @@ class Handler(BaseHTTPRequestHandler):
         if length > MAX_BODY:
             raise ValueError("body too large")
         try:
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            data = self.rfile.read(length)
+        except OSError:
+            raise ValueError("body read failed")
+        self._consumed = getattr(self, "_consumed", 0) + len(data)
+        try:
+            payload = json.loads(data.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ValueError("invalid json")
         if not isinstance(payload, dict):
@@ -160,6 +166,28 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("state must be an object")
         self._validate_state(state)
         return state
+
+    def _drain_body(self) -> None:
+        """把没读完的请求体丢掉，否则残留字节会破坏 keep-alive 连接上的下一个请求。"""
+        raw_len = self.headers.get("Content-Length")
+        try:
+            length = int(raw_len) if raw_len else 0
+        except ValueError:
+            length = 0
+        remaining = length - getattr(self, "_consumed", 0)
+        if remaining <= 0:
+            return
+        if remaining > MAX_BODY:
+            self.close_connection = True
+            return
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            self.close_connection = True
 
     # ------------------------------------------------------------ 会话
 
@@ -450,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     tmp.write(chunk)
                     remaining -= len(chunk)
+                    self._consumed = getattr(self, "_consumed", 0) + len(chunk)
             if remaining:
                 self._error(400, "incomplete", "上传中断，文件不完整")
                 return
@@ -469,12 +498,15 @@ class Handler(BaseHTTPRequestHandler):
         self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}", "bytes": written})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        self._consumed = 0
         try:
             self._handle_delete()
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             return
         except Exception:  # noqa: BLE001
             self._internal()
+        finally:
+            self._drain_body()
 
     def _handle_delete(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
@@ -496,12 +528,15 @@ class Handler(BaseHTTPRequestHandler):
         self._ok({"ok": True, "id": media_id})
 
     def do_POST(self) -> None:  # noqa: N802
+        self._consumed = 0
         try:
             self._handle_post()
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             return
         except Exception:  # noqa: BLE001
             self._internal()
+        finally:
+            self._drain_body()
 
     def _handle_post(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
@@ -568,12 +603,15 @@ class Handler(BaseHTTPRequestHandler):
         handler(state)
 
     def do_PUT(self) -> None:  # noqa: N802
+        self._consumed = 0
         try:
             self._handle_put()
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             return
         except Exception:  # noqa: BLE001
             self._internal()
+        finally:
+            self._drain_body()
 
     def _handle_put(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
@@ -805,16 +843,35 @@ def main() -> int:
     cfg = db.config()
     print("MySQL", flush=True)
     print(f"  target   : {cfg['user']}@{cfg['host']}:{cfg['port']}/{cfg['database']}", flush=True)
-    db_ok, db_detail = db.ping()
-    print(f"  ping     : {'ok' if db_ok else 'FAILED'} · {db_detail}", flush=True)
-    if db_ok:
-        try:
-            db.init_schema()
-            print("  schema   : ready (users / sessions / user_state)", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  schema   : FAILED · {exc}", flush=True)
-    else:
-        print("  note     : accounts need MySQL; AI pages still work", flush=True)
+
+    # 容器里数据库常常比应用晚 1-2 分钟就绪：放到后台等，别挡住端口监听（探针要能连上）。
+    db_state = {"ok": False, "detail": "connecting"}
+
+    def _prepare_db() -> None:
+        deadline = time.monotonic() + float(os.environ.get("NESTORY_DB_WAIT", "600"))
+        attempt = 0
+        while True:
+            db_ok, db_detail = db.ping()
+            if db_ok:
+                try:
+                    db.init_schema()
+                    print(f"  ping     : ok · {db_detail}", flush=True)
+                    print("  schema   : ready (users / sessions / user_state / media)", flush=True)
+                    db_state.update(ok=True, detail=db_detail)
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    db_detail = f"schema failed: {exc}"
+            attempt += 1
+            if time.monotonic() >= deadline:
+                print(f"  ping     : FAILED · {db_detail}", flush=True)
+                print("  note     : accounts need MySQL; AI pages still work", flush=True)
+                db_state.update(ok=False, detail=db_detail)
+                return
+            if attempt == 1:
+                print(f"  waiting  : {db_detail}", flush=True)
+            time.sleep(min(2 ** min(attempt, 4), 10))
+
+    threading.Thread(target=_prepare_db, name="db-init", daemon=True).start()
 
     ai = llm.config()
     print("AI model", flush=True)
@@ -844,7 +901,7 @@ def main() -> int:
         host=args.host,
         port=args.port,
         db=f"{cfg['host']}:{cfg['port']}/{cfg['database']}",
-        db_ok=db_ok,
+        db_ok=db_state["ok"],
         ai=f"{ai['provider']}/{ai['model']}",
         level=log_level,
         log=logsetup.log_file() or "console-only",
