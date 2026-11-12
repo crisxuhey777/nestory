@@ -21,7 +21,7 @@ docker run --rm -p 8000:8000 \
 ```
 
 容器启动时会 `db.ping()` → `db.init_schema()`，所以托管 MySQL **只要给一个空库 + 有建表权限的账号**，
-users / sessions / user_state 三张表会自动建出来，不用手动导 SQL。
+users / sessions / user_state / media 四张表会自动建出来，不用手动导 SQL。
 
 ## 2. 必须配的环境变量
 
@@ -34,6 +34,15 @@ users / sessions / user_state 三张表会自动建出来，不用手动导 SQL�
 | `NESTORY_LLM_MODEL` | 模型名 | `glm-4-flash` |
 | `NESTORY_LLM_KEY` | 智谱 API Key | 平台「环境变量 / Secret」里填，**别写进仓库** |
 | `NESTORY_LLM_TIMEOUT` | AI 超时（秒） | 默认 45；平台入口超时要比它长 |
+| `NESTORY_S3_ENDPOINT` / `NESTORY_S3_BUCKET` / `NESTORY_S3_REGION` | 媒体对象存储（R2 / MinIO / S3） | 建议必配；R2 用 `https://<账号>.r2.cloudflarestorage.com` + `auto` |
+| `NESTORY_S3_ACCESS_KEY` / `NESTORY_S3_SECRET_KEY` | 对象存储密钥 | 放平台 Secret，**别写进仓库** |
+| `NESTORY_S3_PREFIX` | 对象前缀 | 默认 `nestory`，多环境可分开 |
+| `NESTORY_S3_CDN_BASE` | 可选：公开/CDN 域名 | 配了浏览器直连该域名，不再 302 到签名地址 |
+| `NESTORY_MEDIA_MAX_MB` / `NESTORY_MEDIA_QUOTA_MB` | 单文件上限 / 每账号配额 | 默认 200 / 5120（5 GB） |
+
+> 媒体存储不配 `NESTORY_S3_*` 时会退回容器内 `backend/media/`，**容器重建就丢**，只适合本地开发。
+> 私有桶就够用：后端 `GET /api/media/blob/<id>` 会 302 到短时效（1 小时）签名地址，前端不用拿密钥。
+> 桶需要允许浏览器跨域 PUT（预签名直传），CORS 里放行站点域名、方法 `PUT`、请求头 `Content-Type`。
 
 `backend/db.env`、`backend/llm.env` 已被 `.gitignore` 和 `.dockerignore` 排除，不会进镜像。
 
@@ -70,7 +79,8 @@ docker push ghcr.io/crisxuhey777/nestory:0.1
 
 ## 5. 已知限制（和上线无关，但会先撞上）
 
-- 照片/视频存在**浏览器本地**（IndexedDB/localStorage），每个浏览器各存各的；
-  单账号 localStorage 约 5 MB 上限，照片压缩到 1200px 就是为了这个。数据量大了要另做对象存储。
+- 照片/视频已经走对象存储：`state` 里只存 `/api/media/blob/<id>` 短地址，媒体元数据在 MySQL `media` 表，
+  字节在 S3 桶里。上线前记得配 `NESTORY_S3_*`，否则媒体会落在容器磁盘上。
 - 后端把整份 AppState 存在 `user_state.state_json`（MEDIUMTEXT，16 MB 上限），请求体上限 12 MB。
 - 没有限流和验证码；公网开放后建议后面加。
+- 账号配额的用量是「预签名时登记的大小」，直传完成后没有回查对象实际大小；配额被绕过的风险很低但存在。

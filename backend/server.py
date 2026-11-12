@@ -29,6 +29,7 @@ import logging
 import mimetypes
 import os
 import sys
+import tempfile
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,7 +45,9 @@ import db  # noqa: E402
 import fixtures  # noqa: E402
 import llm  # noqa: E402
 import logsetup  # noqa: E402
+import media as media_store  # noqa: E402
 import quote as daily_quote  # noqa: E402
+import storage  # noqa: E402
 from app_state import build_state  # noqa: E402
 
 MAX_BODY = 12 * 1024 * 1024  # 整份 AppState（含压缩后的照片 data URL）可能到几 MB
@@ -208,6 +211,12 @@ class Handler(BaseHTTPRequestHandler):
                         "POST /api/ai/analysis",
                         "POST /api/ai/story",
                         "POST /api/daily-quote",
+                        "GET /api/media",
+                        "POST /api/media/presign",
+                        "POST /api/media/{id}/confirm",
+                        "PUT /api/media/blob/{id}",
+                        "GET /api/media/blob/{id}",
+                        "DELETE /api/media/{id}",
                     ],
                     "ai": {"provider": ai["provider"], "model": ai["model"]},
                 }
@@ -252,6 +261,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/test-config":
             self._ok({"source": "src/data/test_config.js", "data": fixtures.as_dict()})
+            return
+
+        if path == "/api/media":
+            user = self._media_user()
+            if user is None:
+                return
+            try:
+                self._ok(media_store.listing(user))
+            except accounts.ApiError as exc:
+                self._fail(exc)
+            return
+
+        if path.startswith("/api/media/blob/"):
+            self._media_blob(path.rsplit("/", 1)[-1])
             return
 
         if STATIC_DIR is not None and self._serve_static(parsed.path):
@@ -313,6 +336,165 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return True
 
+    # ------------------------------------------------------------ 媒体
+
+    def _media_user(self) -> dict | None:
+        """媒体接口的鉴权：只要用户，不读整份 state。"""
+        try:
+            return accounts.user_from_token(self._token())
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return None
+
+    def _media_blob(self, media_id: str) -> None:
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            row = media_store.row_for(user, media_id)
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        if storage.driver() == "s3":
+            # 私有桶：302 到短时效签名地址，浏览器自己下载，不占应用带宽
+            self.send_response(302)
+            self.send_header("Location", storage.get_url(row["object_key"], 3600))
+            self.send_header("Cache-Control", "private, max-age=600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        path = storage.local_path(row["object_key"])
+        if not path.is_file():
+            self._error(404, "not_found", "文件已不在服务器上")
+            return
+        self._send_file(path, row.get("mime") or "")
+
+    def _send_file(self, path: Path, ctype: str) -> None:
+        """带 Range 的流式响应，视频才能拖动进度条。"""
+        total = path.stat().st_size
+        start, end = 0, total - 1
+        status = 200
+        rng = self.headers.get("Range") or ""
+        if rng.startswith("bytes="):
+            first, _, last = rng[6:].partition("-")
+            try:
+                if first:
+                    start = int(first)
+                    end = min(int(last), total - 1) if last else total - 1
+                elif last:
+                    start = max(total - int(last), 0)
+            except ValueError:
+                start, end = 0, total - 1
+            else:
+                if start > end or start >= total:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = 206
+        mime = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        length = end - start + 1
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            if status == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self.end_headers()
+            with path.open("rb") as fh:
+                fh.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = fh.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            self._log(status, length)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _media_upload(self, media_id: str) -> None:
+        """代理上传：S3 没配时也能用，浏览器 PUT 到这个地址。"""
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            row = media_store.row_for(user, media_id)
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        limit = storage.max_bytes()
+        if not 0 < length <= limit:
+            self._error(
+                413,
+                "too_large",
+                f"文件大小要在 1 字节到 {limit // 1024 // 1024} MB 之间",
+            )
+            return
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".upload")
+        tmp_path = Path(tmp.name)
+        try:
+            remaining = length
+            with tmp:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(256 * 1024, remaining))
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+                    remaining -= len(chunk)
+            if remaining:
+                self._error(400, "incomplete", "上传中断，文件不完整")
+                return
+            ctype = row.get("mime") or "application/octet-stream"
+            written = storage.put_stream(row["object_key"], tmp_path, ctype)
+        except RuntimeError as exc:
+            logger.exception("media upload failed id=%s", media_id)
+            self._error(502, "storage_failed", str(exc))
+            return
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        try:
+            media_store.confirm(user, media_id, written)
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}", "bytes": written})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        try:
+            self._handle_delete()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            return
+        except Exception:  # noqa: BLE001
+            self._internal()
+
+    def _handle_delete(self) -> None:
+        path = urlsplit(self.path).path.rstrip("/") or "/"
+        if not path.startswith("/api/media/"):
+            self._error(404, "not_found", path)
+            return
+        media_id = path.rsplit("/", 1)[-1]
+        if media_id in ("", "blob", "presign"):
+            self._error(404, "not_found", path)
+            return
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            media_store.remove(user, media_id)
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        self._ok({"ok": True, "id": media_id})
+
     def do_POST(self) -> None:  # noqa: N802
         try:
             self._handle_post()
@@ -336,6 +518,38 @@ class Handler(BaseHTTPRequestHandler):
             "/api/ai/story": self._ai_story,
             "/api/daily-quote": self._daily_quote,
         }
+
+        if path == "/api/media/presign":
+            user = self._media_user()
+            if user is None:
+                return
+            try:
+                payload = self._read_json()
+            except ValueError as exc:
+                self._error(400, "bad_request", str(exc))
+                return
+            try:
+                self._ok(media_store.presign(user, payload))
+            except accounts.ApiError as exc:
+                self._fail(exc)
+            return
+
+        if path.startswith("/api/media/") and path.endswith("/confirm"):
+            parts = path.split("/")
+            media_id = parts[3] if len(parts) > 4 else ""
+            user = self._media_user()
+            if user is None:
+                return
+            if not media_id:
+                self._error(404, "not_found", path)
+                return
+            try:
+                media_store.confirm(user, media_id, 0)
+            except accounts.ApiError as exc:
+                self._fail(exc)
+                return
+            self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}"})
+            return
 
         if path in auth_routes:
             auth_routes[path]()
@@ -363,6 +577,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_put(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
+        if path.startswith("/api/media/blob/"):
+            self._media_upload(path.rsplit("/", 1)[-1])
+            return
         if path != "/api/state":
             self._error(404, "not_found", path)
             return

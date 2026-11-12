@@ -251,6 +251,17 @@ def login(data: dict) -> tuple[dict, dict, str]:
     return _public_user(row), state, token
 
 
+def user_from_token(token: str | None) -> dict:
+    """只取用户，不加载 AppState —— 媒体接口每次都要鉴权，别为它读整份 state。"""
+    if not token:
+        raise ApiError(401, "unauthorized", "请先登录")
+    with _conn() as conn:
+        row = _user_row_by_token(conn, token)
+    if not row:
+        raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
+    return _public_user(row)
+
+
 def me(token: str | None) -> tuple[dict, dict]:
     if not token:
         raise ApiError(401, "unauthorized", "请先登录")

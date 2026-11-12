@@ -93,6 +93,8 @@ export const MEDIA_LIMITS = {
   videoMaxMB: 120,
   photoMaxEdge: 1200,
   photoQuality: 0.82,
+  thumbMaxEdge: 480,
+  thumbQuality: 0.78,
   posterMaxEdge: 1200,
   posterQuality: 0.8,
 }
@@ -182,7 +184,6 @@ export const PROFILE_MENU = [
   },
   { key: 'reminders', icon: 'bell', title: '提醒中心', sub: '喂养间隔与夜间安静' },
   { key: 'share', icon: 'family', title: '家庭共享', sub: '共同记录 · 权限可设置为只读' },
-  { key: 'backup', icon: 'sync', title: '数据与备份', sub: '本机记录与手动同步' },
   { key: 'privacy', icon: 'shield', title: '隐私与安全', sub: '家庭成员可见 · 默认不公开' },
   { key: 'about', icon: 'leaf', title: '关于 Nestory', sub: '名字、信念，和这间小屋的由来' },
 ]

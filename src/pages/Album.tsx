@@ -5,10 +5,11 @@ import { AlbumAiCard } from '../components/AiPanels'
 import { Sheet } from '../components/Sheet'
 import { useStore, uid } from '../data/store'
 import { ageBetween, fromISODate, longDate, monthDay, monthLabel } from '../lib/date'
-import { compressImage, formatClipLength, inspectVideo, putClip, useClipURL } from '../lib/media'
+import { formatClipLength, inspectVideo, uploadClip, uploadPhoto, useClipURL } from '../lib/media'
 import { viewerName } from '../lib/viewer'
 import type { Photo } from '../data/types'
 import { MEDIA_GROUPS, MEDIA_LIMITS } from '../data/config'
+import { ApiError } from '../data/api'
 
 /** Badge for a motion clip: LIVE for live photos, length for videos. */
 function KindBadge({ photo, variant }: { photo: Photo; variant?: 'cover' }) {
@@ -167,13 +168,13 @@ export default function AlbumPage() {
     setBusy(true)
     try {
       if (mode === 'photo') {
-        const data = await compressImage(file)
+        const { url, thumb } = await uploadPhoto(file)
         dispatch({
           type: 'addPhoto',
           photo: {
             id: uid('ph'),
-            src: data,
-            thumb: data,
+            src: url,
+            thumb,
             at: Date.now(),
             caption: '今天的模样',
             author: viewer,
@@ -187,19 +188,18 @@ export default function AlbumPage() {
           return
         }
         const info = await inspectVideo(file)
-        const videoId = uid('clip')
-        await putClip(videoId, file)
+        const { url, poster } = await uploadClip(file, info, mode)
         dispatch({
           type: 'addPhoto',
           photo: {
             id: uid('ph'),
-            src: info.poster,
-            thumb: info.poster,
+            src: poster,
+            thumb: poster,
             at: Date.now(),
             caption: mode === 'live' ? '会动的瞬间' : '一段小视频',
             author: viewer,
             kind: mode,
-            videoId,
+            video: url,
             durationSec: info.durationSec,
           },
         })
@@ -207,8 +207,8 @@ export default function AlbumPage() {
       }
       setFilter('all')
       setAddOpen(false)
-    } catch {
-      toast('这个文件暂时无法读取')
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : '这个文件暂时无法读取')
     } finally {
       setBusy(false)
       input.value = ''

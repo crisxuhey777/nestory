@@ -95,6 +95,8 @@ export const MEDIA_LIMITS: {
   videoMaxMB: number
   photoMaxEdge: number
   photoQuality: number
+  thumbMaxEdge: number
+  thumbQuality: number
   posterMaxEdge: number
   posterQuality: number
 }
@@ -115,7 +117,7 @@ export const MEDIA_GROUPS: readonly {
 }[]
 
 export const PROFILE_MENU: readonly {
-  key: 'settings' | 'reminders' | 'share' | 'backup' | 'privacy' | 'about'
+  key: 'settings' | 'reminders' | 'share' | 'privacy' | 'about'
   icon: IconName
   title: string
   sub: string

@@ -11,6 +11,44 @@ export type User = {
 
 export type Session = { user: User; state: AppState }
 
+export type MediaKind = 'photo' | 'video' | 'live'
+
+export type MediaPresignInput = {
+  kind: MediaKind
+  mime: string
+  bytes: number
+  width?: number
+  height?: number
+  durationSec?: number
+  sha256?: string
+  /** 强制走应用服务器中转（本地驱动或对象存储临时不可用时） */
+  proxy?: boolean
+}
+
+export type MediaPresign = {
+  id: string
+  mode: 's3' | 'proxy'
+  method: string
+  uploadUrl: string
+  headers: Record<string, string>
+  url: string
+  expiresIn?: number
+}
+
+export type MediaUsage = { items: number; bytes: number; quotaBytes: number }
+
+export type MediaItem = {
+  id: string
+  kind: MediaKind
+  bytes: number
+  mime: string
+  width: number | null
+  height: number | null
+  durationSec: number | null
+  createdAt: number | null
+  url: string
+}
+
 export type RegisterInput = {
   email: string
   password: string
@@ -121,4 +159,24 @@ export const api = {
     if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '后端返回的数据不是 AppState v3')
     return payload.state
   },
+}
+
+export const mediaApi = {
+  presign: (input: MediaPresignInput): Promise<MediaPresign> =>
+    request<MediaPresign>('/api/media/presign', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  confirm: (id: string): Promise<{ id: string; url: string }> =>
+    request<{ id: string; url: string }>(`/api/media/${id}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  list: (): Promise<{ items: MediaItem[]; usage: MediaUsage }> =>
+    request<{ items: MediaItem[]; usage: MediaUsage }>('/api/media'),
+
+  remove: (id: string): Promise<{ ok: boolean; id: string }> =>
+    request<{ ok: boolean; id: string }>(`/api/media/${id}`, { method: 'DELETE' }),
 }

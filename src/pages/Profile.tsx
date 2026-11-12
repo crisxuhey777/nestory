@@ -4,7 +4,7 @@ import { Icon } from '../brand/icons'
 import { NestoryLogo } from '../brand/Logo'
 import { Sheet } from '../components/Sheet'
 import { useStore } from '../data/store'
-import { ageBetween, ageLabel, fromISODate, relativeFromNow, timeHM, toISODate } from '../lib/date'
+import { ageBetween, ageLabel, fromISODate, toISODate } from '../lib/date'
 import { navigate } from '../lib/route'
 import type { Route } from '../lib/route'
 import type { Baby, FamilyMember } from '../data/types'
@@ -156,10 +156,6 @@ export default function ProfilePage() {
     settings: () => navigate('settings'),
     reminders: () => navigate('reminders'),
     share: () => setShare(true),
-    backup: () => {
-      dispatch({ type: 'sync', at: Date.now() })
-      toast(`已同步 · ${timeHM(Date.now())}`)
-    },
     privacy: () => setPrivacy(true),
     about: () => navigate('about' as Route),
   }
@@ -171,9 +167,7 @@ export default function ProfilePage() {
         ? state.reminder.enabled
           ? `每 ${state.reminder.intervalMinutes / 60} 小时 · 夜间安静`
           : '当前已关闭'
-        : item.key === 'backup'
-          ? `上次同步 ${relativeFromNow(state.lastSyncedAt, now)}`
-          : item.sub,
+        : item.sub,
     value:
       item.key === 'reminders'
         ? state.reminder.enabled
@@ -181,9 +175,7 @@ export default function ProfilePage() {
           : '已关闭'
         : item.key === 'share'
           ? `${state.family.length} 位成员`
-          : item.key === 'backup'
-            ? '立即同步'
-            : undefined,
+          : undefined,
     onClick: menuActions[item.key],
   }))
 

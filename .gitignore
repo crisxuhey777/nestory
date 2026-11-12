@@ -7,6 +7,8 @@ shots/_*.png
 *.log
 backend/llm.env
 backend/db.env
+backend/media.env
+backend/media/
 backend/logs/
 backend/logs-test/
 

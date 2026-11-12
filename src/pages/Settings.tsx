@@ -75,24 +75,6 @@ export default function SettingsPage() {
     if (text) toast(text)
   }
 
-  const exportData = () => {
-    const payload = {
-      app: APP.name,
-      version: APP.version,
-      exportedAt: new Date().toISOString(),
-      state,
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-    a.href = url
-    a.download = `nestory-${stamp}.json`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1200)
-    toast('已导出成长数据，仅包含这台设备上的记录')
-  }
-
   return (
     <div className="page">
       <ScreenHead title="设置" sub="Preferences" back="profile" />
@@ -262,26 +244,10 @@ export default function SettingsPage() {
           </div>
 
           <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-            照片会压缩后再保存，视频与 Live 短片另存在浏览器的媒体库。记录保存在账号里，导出的 JSON 不含视频文件。
+            照片会压缩后再保存，视频与 Live 短片存在账号的媒体库里，换设备登录也能看到。
           </p>
 
           <div className="settings" style={{ marginTop: 6 }}>
-            <button className="setting" onClick={exportData}>
-              <span className="setting__icon">
-                <Icon name="arrowRight" size={17} />
-              </span>
-              <span className="setting__main">
-                <span className="setting__title">导出成长数据</span>
-                <span className="setting__sub" style={{ display: 'block' }}>
-                  JSON 备份 · 记录、成长与照片索引
-                </span>
-              </span>
-              <span className="setting__value">
-                导出
-                <Icon name="chevronRight" size={12} />
-              </span>
-            </button>
-
             <button className="setting" onClick={() => setResetOpen(true)}>
               <span className="setting__icon">
                 <Icon name="sync" size={17} />
@@ -349,7 +315,7 @@ export default function SettingsPage() {
         open={resetOpen}
         onClose={() => setResetOpen(false)}
         title="恢复示例数据？"
-        desc="这个账号里的记录会被示例数据替换，导出的 JSON 不受影响。"
+        desc="这个账号里的记录会被示例数据替换，已上传的照片与视频会保留。"
         footer={
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn--quiet" style={{ flex: 1 }} onClick={() => setResetOpen(false)}>
@@ -370,7 +336,7 @@ export default function SettingsPage() {
         }
       >
         <p className="about-copy" style={{ marginBottom: 0 }}>
-          如果想保留现在的记录，先导出 JSON，再恢复示例数据。
+          示例数据只替换文字记录，媒体库里的照片与视频不会被删除。
         </p>
       </Sheet>
 
@@ -390,14 +356,14 @@ export default function SettingsPage() {
             <p>Nestory 记录的是家庭里最私人的一部分。我们的原则很简单：</p>
             <p>一、宝宝的记录、照片与文字保存在你的账号与本机数据库里，不进入任何公开推荐，也不用于广告或模型训练。</p>
             <p>二、家庭成员共享时，由管理员决定每位家人是管理员、可编辑还是只读。</p>
-            <p>三、你可以随时导出全部数据，或恢复示例数据清空当前记录。</p>
+            <p>三、你可以随时删除自己的照片与视频，或恢复示例数据清空当前记录。</p>
             <p>四、通知只用于喂养提醒，不包含营销内容。</p>
           </div>
         ) : (
           <div className="policy">
             <p>Nestory 是一个家庭成长记录工具，不提供医疗诊断或治疗建议。</p>
             <p>喂养、睡眠与生长数据仅作家庭参考；如对宝宝的健康有疑问，请咨询儿科医生。</p>
-            <p>请妥善保管导出的备份文件，其中包含宝宝的照片与成长信息。</p>
+            <p>请妥善保管自己的账号密码，账号里的照片与成长信息只对家庭成员可见。</p>
             <p>继续使用即表示你理解并同意以上说明。</p>
           </div>
         )}

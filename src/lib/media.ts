@@ -1,28 +1,135 @@
 import { useEffect, useState } from 'react'
 import { MEDIA_LIMITS, STORAGE_KEYS } from '../data/config'
+import type { MediaKind, MediaPresignInput } from '../data/api'
+import { ApiError, mediaApi } from '../data/api'
 
-/** Downscale and re-encode a picked photo so it fits comfortably in localStorage. */
-export async function compressImage(file: File): Promise<string> {
+type Encoded = { blob: Blob; width: number; height: number }
+
+async function loadImage(file: File): Promise<{ img: HTMLImageElement; release: () => void }> {
   const url = URL.createObjectURL(file)
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image()
       el.onload = () => resolve(el)
-      el.onerror = reject
+      el.onerror = () => reject(new Error('image decode failed'))
       el.src = url
     })
-    const max = MEDIA_LIMITS.photoMaxEdge
-    const scale = Math.min(1, max / Math.max(img.width, img.height))
+    return { img, release: () => URL.revokeObjectURL(url) }
+  } catch (error) {
+    URL.revokeObjectURL(url)
+    throw error
+  }
+}
+
+/** Downscale and re-encode a picked photo into a JPEG blob. */
+export async function compressToBlob(
+  file: File,
+  maxEdge: number = MEDIA_LIMITS.photoMaxEdge,
+  quality: number = MEDIA_LIMITS.photoQuality,
+): Promise<Encoded> {
+  const { img, release } = await loadImage(file)
+  try {
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
     const canvas = document.createElement('canvas')
-    canvas.width = Math.round(img.width * scale)
-    canvas.height = Math.round(img.height * scale)
+    canvas.width = Math.max(1, Math.round(img.width * scale))
+    canvas.height = Math.max(1, Math.round(img.height * scale))
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('Canvas 2D context is unavailable')
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    return canvas.toDataURL('image/jpeg', MEDIA_LIMITS.photoQuality)
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (next) => (next ? resolve(next) : reject(new Error('JPEG encode failed'))),
+        'image/jpeg',
+        quality,
+      )
+    })
+    return { blob, width: canvas.width, height: canvas.height }
   } finally {
-    URL.revokeObjectURL(url)
+    release()
   }
+}
+
+/** Downscale and re-encode a picked photo so it fits comfortably in localStorage. */
+export async function compressImage(file: File): Promise<string> {
+  const { blob } = await compressToBlob(file)
+  return dataURL(blob)
+}
+
+function dataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function blobFromDataURL(url: string): Promise<Blob> {
+  const response = await fetch(url)
+  return response.blob()
+}
+
+export type UploadedMedia = { id: string; url: string }
+
+/**
+ * 上传一个文件到媒体存储：先向后端要预签名地址，再直传对象存储；
+ * 没配对象存储时后端会回 mode=proxy，改由应用服务器中转。
+ */
+export async function uploadMedia(
+  blob: Blob,
+  kind: MediaKind,
+  extra: Partial<Omit<MediaPresignInput, 'kind' | 'bytes' | 'mime'>> = {},
+): Promise<UploadedMedia> {
+  const presign = await mediaApi.presign({
+    kind,
+    mime: blob.type || (kind === 'photo' ? 'image/jpeg' : 'video/mp4'),
+    bytes: blob.size,
+    ...extra,
+  })
+
+  let response: Response
+  try {
+    response = await fetch(presign.uploadUrl, {
+      method: presign.method || 'PUT',
+      headers: presign.headers,
+      body: blob,
+      credentials: 'same-origin',
+    })
+  } catch {
+    throw new ApiError(0, 'upload_network', '上传中断，检查网络后再试一次')
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, 'upload_failed', `上传失败（HTTP ${response.status}）`)
+  }
+  if (presign.mode === 's3') {
+    await mediaApi.confirm(presign.id)
+  }
+  return { id: presign.id, url: presign.url }
+}
+
+/** 照片：原图（长边 1200）+ 缩略图（长边 480），两张分别上传。 */
+export async function uploadPhoto(file: File): Promise<{ url: string; thumb: string }> {
+  const full = await compressToBlob(file, MEDIA_LIMITS.photoMaxEdge, MEDIA_LIMITS.photoQuality)
+  const small = await compressToBlob(file, MEDIA_LIMITS.thumbMaxEdge, MEDIA_LIMITS.thumbQuality)
+  const [main, thumb] = await Promise.all([
+    uploadMedia(full.blob, 'photo', { width: full.width, height: full.height }),
+    uploadMedia(small.blob, 'photo', { width: small.width, height: small.height }),
+  ])
+  return { url: main.url, thumb: thumb.url }
+}
+
+/** 视频：上传片子本身，海报帧当作一张照片上传。 */
+export async function uploadClip(
+  file: File,
+  info: VideoInfo,
+  kind: 'video' | 'live',
+): Promise<{ url: string; poster: string }> {
+  const posterBlob = await blobFromDataURL(info.poster)
+  const [clip, poster] = await Promise.all([
+    uploadMedia(file, kind, { durationSec: info.durationSec }),
+    uploadMedia(posterBlob, 'photo'),
+  ])
+  return { url: clip.url, poster: poster.url }
 }
 
 /** Uploaded clips live in IndexedDB; localStorage would overflow after one clip. */

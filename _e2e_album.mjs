@@ -144,14 +144,14 @@ await upload(2, 'public/assets/videos/nest-live.mp4')
 await waitFor(`document.querySelectorAll('.album-card').length >= 4 && !document.querySelector('.sheet')`, 6000)
 check('视频上传后加入相册', (await text('.tab-head__meta')).startsWith('7 个瞬间'), await text('.tab-head__meta'))
 check('视频封面有长度徽标', /0:0\d/.test(await text('.album-badge')), await text('.album-badge'))
-check('视频生成海报而不是黑屏', (await evaluate(`document.querySelector('.album-cover img').src.startsWith('data:image/')`)) === true, '')
+check('视频生成海报而不是黑屏', (await evaluate(`document.querySelector('.album-cover img').src.includes('/api/media/blob/')`)) === true, '')
 
 await clickSel('.album-cover')
 await sleep(500)
 check('视频用播放器打开', (await evaluate(`!!document.querySelector('.lightbox video[controls]')`)) === true, '')
 check(
-  '视频来自 IndexedDB 的 blob',
-  (await evaluate(`(document.querySelector('.lightbox video')?.getAttribute('src') || '').startsWith('blob:')`)) === true,
+  '视频来自媒体库地址',
+  (await evaluate(`(document.querySelector('.lightbox video')?.getAttribute('src') || '').includes('/api/media/blob/')`)) === true,
   await evaluate(`document.querySelector('.lightbox video')?.getAttribute('src') ?? 'none'`),
 )
 await clickSel('.lightbox__close')
@@ -172,7 +172,7 @@ await clickSel('.album-cover')
 await sleep(500)
 check(
   '刷新后 Live 仍可播放',
-  (await evaluate(`(document.querySelector('.lightbox video')?.getAttribute('src') || '').startsWith('blob:')`)) === true,
+  (await evaluate(`(document.querySelector('.lightbox video')?.getAttribute('src') || '').includes('/api/media/blob/')`)) === true,
   await evaluate(`document.querySelector('.lightbox video')?.getAttribute('src') ?? 'none'`),
 )
 await clickSel('.lightbox__close')
@@ -182,7 +182,7 @@ await sleep(250)
 await clickSel('.tab-head .icon-btn')
 await sleep(350)
 await upload(0, 'public/assets/photos/p3@520.jpg')
-await waitFor(`document.querySelectorAll('.album-card').length >= 6`, 5000)
+await waitFor(`(document.querySelector('.tab-head__meta')?.textContent || '').startsWith('9 个瞬间')`, 8000)
 check('照片仍可上传', (await text('.tab-head__meta')).startsWith('9 个瞬间'), await text('.tab-head__meta'))
 check('照片上传后成为封面', (await text('.album-cover__cap')).includes('今天的模样'), await text('.album-cover__cap'))
 

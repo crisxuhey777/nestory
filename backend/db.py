@@ -71,6 +71,27 @@ SCHEMA = [
       CONSTRAINT fk_state_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 媒体只在这里留一行元数据，字节在对象存储里；state 里存 /api/media/blob/<id>
+    """
+    CREATE TABLE IF NOT EXISTS media (
+      id CHAR(32) NOT NULL,
+      user_id BIGINT UNSIGNED NOT NULL,
+      kind VARCHAR(8) NOT NULL,
+      object_key VARCHAR(255) NOT NULL,
+      mime VARCHAR(100) NOT NULL DEFAULT '',
+      bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      width INT UNSIGNED NULL,
+      height INT UNSIGNED NULL,
+      duration_sec DECIMAL(7,2) NULL,
+      sha256 CHAR(64) NULL,
+      state VARCHAR(10) NOT NULL DEFAULT 'ready',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at DATETIME NULL,
+      PRIMARY KEY (id),
+      KEY idx_media_user (user_id, created_at),
+      CONSTRAINT fk_media_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 

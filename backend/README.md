@@ -120,6 +120,12 @@ AI model
 | POST | `/api/daily-quote` | 首页每日一句；生日/满月/百天/半岁/节日带 `label` |
 | GET | `/api/health` | 健康检查（含 `db` 与 `ai`） |
 | GET | `/api/test-config` | 原始模板（时间仍是字符串），用于核对 `fixtures.py` |
+| GET | `/api/media` | 当前账号的媒体列表 + 用量 `{ items, bytes, quotaBytes }` |
+| POST | `/api/media/presign` | 预签名：`{ kind, mime, bytes, width?, height?, durationSec? }` → 上传地址 |
+| POST | `/api/media/{id}/confirm` | 对象存储直传完成后确认，把记录标成 `ready` |
+| PUT | `/api/media/blob/{id}` | 代理上传（没配对象存储时用这个地址） |
+| GET | `/api/media/blob/{id}` | 读媒体：S3 → 302 到 1 小时签名地址；本地驱动 → 支持 `Range` 的流式响应 |
+| DELETE | `/api/media/{id}` | 软删记录并删对象 |
 | GET | `/` | 接口索引 |
 
 `state` 里的时间全部是 **epoch 毫秒**，与 `src/data/types.ts` 一致；`state.baby.birthday`
@@ -172,6 +178,29 @@ NESTORY_LLM_MODEL=glm-4-flash
 真实环境变量优先级更高，可以临时覆盖。只换 Pollinations 的模型时写
 `NESTORY_LLM_MODEL=openai-fast`。
 
+## 媒体与对象存储
+
+照片、视频、Live 短片不再写浏览器 IndexedDB：前端先 `POST /api/media/presign` 拿地址，
+再直传对象存储（或代理上传），`AppState` 里只留 `/api/media/blob/<id>` 这种短地址。
+元数据在 MySQL `media` 表，字节在桶里。
+
+```ini
+# 环境变量（或写 backend/media.env，优先级低于环境变量）
+NESTORY_S3_ENDPOINT=https://<账号>.r2.cloudflarestorage.com
+NESTORY_S3_BUCKET=nestory
+NESTORY_S3_REGION=auto
+NESTORY_S3_ACCESS_KEY=...
+NESTORY_S3_SECRET_KEY=...
+NESTORY_S3_PREFIX=nestory
+NESTORY_S3_CDN_BASE=            # 可选：公开域名
+NESTORY_MEDIA_MAX_MB=200        # 单文件上限
+NESTORY_MEDIA_QUOTA_MB=5120     # 每账号配额
+NESTORY_MEDIA_DIR=backend/media # 没配 S3 时的本地目录（开发用）
+```
+
+没配 `NESTORY_S3_*` 时自动退回本地目录，接口行为一致（`mode: "proxy"`），本地开发和 e2e 不用外部依赖。
+冒烟测试：先起服务，再 `python backend/_media_smoke.py http://127.0.0.1:8000`。
+
 ## 代码结构
 
 ```
@@ -181,6 +210,8 @@ backend/
 ├── db.py            # MySQL 连接、db.env、建表、ping
 ├── auth.py          # PBKDF2 哈希、会话令牌、Cookie 属性
 ├── accounts.py      # 注册/登录/me/logout、读写每个账号的 AppState
+├── storage.py       # 对象存储/本地磁盘、SigV4 预签名、put/delete/get_url
+├── media.py         # media 表：登记、配额、确认、列表、删除
 ├── setup_mysql.py   # 首次建库、建账号、建表
 ├── mysql_ctl.py     # 便携 MySQL 的 start/stop/status/ensure
 ├── llm.py           # prompt 组装 + 模型调用 + 解析 + 本地兜底
@@ -196,7 +227,8 @@ backend/
 - **整体读写**：`AppState` 以整份 JSON 保存，简单可靠但会随记录变多而变大；
   记录到几千条后再按 `care_record` 拆表（架构说明书里的方案）。
 - **AI 依赖公网**：免费接口没有 SLA，慢或限流时靠本地兜底，不阻塞页面。
-- **照片只在浏览器**：上传的图片仍存在浏览器媒体库/`localStorage` 侧，尚未进对象存储。
+- **媒体已进对象存储**：不再受 localStorage 5 MB 限制；容器部署时务必配 `NESTORY_S3_*`，
+  否则文件落在容器磁盘上，重建即丢。旧版本留下的 data URL / IndexedDB 短片仍能正常显示。
 
 下一步建议：把 `POST /api/records` 做成独立写接口（`client_record_id` 幂等），
 再把整份 JSON 拆成记录表，HTTP 层和前端契约可以保持不变。

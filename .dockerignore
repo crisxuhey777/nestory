@@ -10,6 +10,7 @@ _brand
 deploy
 backend/logs
 backend/__pycache__
+backend/media
 backend/**.env
 **/*.pyc
 
