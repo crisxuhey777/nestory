@@ -259,6 +259,9 @@ def _signed_request(
     payload_hash = hashlib.sha256(body).hexdigest()
 
     headers = {"Host": host, "X-Amz-Date": amz_date}
+    if body:
+        # 带 body 的请求必须把 payload 的 sha256 放进签名头，否则 S3 判 SignatureDoesNotMatch
+        headers["X-Amz-Content-Sha256"] = payload_hash
     if content_type:
         headers["Content-Type"] = content_type
     signed_headers = ";".join(sorted(h.lower() for h in headers))
