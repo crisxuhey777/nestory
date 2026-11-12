@@ -1,0 +1,35 @@
+{
+  "name": "nestory",
+  "private": true,
+  "version": "3.0.0",
+  "type": "module",
+  "description": "Nestory — A little nest. A lifetime of stories.",
+  "scripts": {
+    "dev": "vite --port 5178 --strictPort",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 5179 --strictPort",
+    "test": "vitest run",
+    "test:e2e": "node _e2e.mjs",
+    "test:e2e:profile": "node _e2e_profile.mjs",
+    "test:e2e:settings": "node _e2e_settings.mjs",
+    "test:e2e:layout": "node _e2e_layout.mjs",
+    "test:e2e:album": "node _e2e_album.mjs",
+    "test:e2e:lightbox": "node _e2e_lightbox.mjs",
+    "test:e2e:home": "node _e2e_home.mjs",
+    "test:e2e:viewport": "node _e2e_viewport.mjs",
+    "test:e2e:tap": "node _e2e_tap.mjs",
+    "shots": "node _shot.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4"
+  }
+}

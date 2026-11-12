@@ -1,0 +1,18 @@
+node_modules/
+dist/
+_brand/
+.workbuddy/
+_test/run.mjs
+shots/_*.png
+*.log
+backend/llm.env
+backend/db.env
+backend/logs/
+backend/logs-test/
+
+# local packaging / build caches
+Nestory-V3.0-source.zip
+*.zip
+tsconfig.tsbuildinfo
+.DS_Store
+Thumbs.db

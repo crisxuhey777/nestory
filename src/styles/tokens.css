@@ -1,0 +1,73 @@
+/* ============================================================
+   Nestory · Design Tokens   V3.0
+   Brand: Nest + Story — a little nest, a lifetime of stories.
+   ============================================================ */
+
+:root {
+  /* ---- Brand palette ---- */
+  --forest: #304b3b;          /* 主色 · 森林深绿 */
+  --forest-deep: #22362a;
+  --forest-soft: #46604f;
+  --forest-tint: #e7ebe4;
+
+  --champagne: #d7c6a4;       /* 辅助色 · 香槟金 */
+  --champagne-deep: #c3ad85;
+  --champagne-tint: #f2ebdc;
+
+  --ivory: #f9f7f1;           /* 页面底色 · 暖象牙白 */
+  --ivory-deep: #f1ece0;
+  --ivory-raised: #fffdf8;
+
+  --sage: #b8c3b1;            /* 辅助色 · 鼠尾草绿 */
+  --sage-tint: #e8ece3;
+
+  --ink: #303b34;             /* 正文 · 深灰绿 */
+  --ink-2: #5f6d63;
+  --ink-3: #8b968c;
+  --ink-4: #aeb6ac;
+
+  --line: rgba(48, 75, 59, 0.12);
+  --line-soft: rgba(48, 75, 59, 0.07);
+  --line-strong: rgba(48, 75, 59, 0.2);
+
+  --danger: #a4553f;
+  --danger-tint: #f6e9e4;
+
+  /* ---- Type ---- */
+  --font-sans: 'Inter', 'Noto Sans SC', -apple-system, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  --font-serif: 'Fraunces', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+  --font-display: 'Noto Serif SC', 'Fraunces', 'Songti SC', serif;
+
+  /* 阅读偏好：由设置页写入 1 / 1.08 / 1.16 */
+  --type-scale: 1;
+
+  --fs-hero: 40px;
+  --fs-display: 31px;
+  --fs-numeral: 34px;
+  --fs-title: 19px;
+  --fs-body: 15px;
+  --fs-sub: 13.5px;
+  --fs-label: 12px;
+  --fs-micro: 10.5px;
+
+  /* ---- Shape ---- */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* ---- Elevation ---- */
+  --shadow-card: 0 1px 2px rgba(34, 54, 42, 0.04), 0 18px 40px -24px rgba(34, 54, 42, 0.28);
+  --shadow-float: 0 2px 6px rgba(34, 54, 42, 0.06), 0 24px 48px -20px rgba(34, 54, 42, 0.26);
+  --shadow-cta: 0 14px 28px -12px rgba(48, 75, 59, 0.55);
+
+  /* ---- Rhythm ---- */
+  --gutter: 22px;
+  --section-gap: 30px;
+  --app-max: 460px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}

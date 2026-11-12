@@ -1,0 +1,32 @@
+{
+  "name": "Nestory · 家的小窝，成长的故事",
+  "short_name": "Nestory",
+  "description": "为每一个家庭，珍藏成长的每一天。喂养、睡眠、成长数据与家庭相册。",
+  "lang": "zh-CN",
+  "start_url": "/#/home",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F9F7F1",
+  "theme_color": "#304B3B",
+  "icons": [
+    {
+      "src": "/brand/app-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/app-icon-1024.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
