@@ -87,7 +87,8 @@ python scripts/sealos-api.py deploy D:\OneDrive\桌面\NESTORY\.sealos\deploy.ya
 ### 当前线上实例（2026-11-12）
 
 - 地址：<https://nestory-qdknrlol.usw-1.sealos.app>
-- 实例：`nestory-wmmuakji`，镜像 `ghcr.io/crisxuhey777/nestory:0.3.3`
+- 实例：`nestory-wmmuakji`，镜像 `ghcr.io/crisxuhey777/nestory:0.3.6`
+- 每日备份已生效：`/api/health` 的 `backup.last` 指向 `nestory/backups/<UTC 时间戳>.json.gz`
 - `GET /api/health` → `db.ok=true`，AI 走 `glm-4-flash`
 - 媒体：Sealos 对象存储桶（private，path-style，`NESTORY_S3_*` 由模板注入）
 - 验证：`_smoke_deployed.py`（接口全链路）+ 浏览器 e2e 相册 20/20、设置 26/26

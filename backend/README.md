@@ -118,7 +118,7 @@ AI model
 | POST | `/api/ai/analysis` | 近 7 天成长分析（`headline` + 3 条观察 + 2 条建议） |
 | POST | `/api/ai/story` | 相册故事（`title` + `body`） |
 | POST | `/api/daily-quote` | 首页每日一句；生日/满月/百天/半岁/节日带 `label` |
-| GET | `/api/health` | 健康检查（含 `db` 与 `ai`） |
+| GET | `/api/health` | 健康检查（含 `db`、`ai`、`backup`） |
 | GET | `/api/test-config` | 原始模板（时间仍是字符串），用于核对 `fixtures.py` |
 | GET | `/api/media` | 当前账号的媒体列表 + 用量 `{ items, bytes, quotaBytes }` |
 | POST | `/api/media/presign` | 预签名：`{ kind, mime, bytes, width?, height?, durationSec? }` → 上传地址 |
@@ -201,6 +201,21 @@ NESTORY_MEDIA_DIR=backend/media # 没配 S3 时的本地目录（开发用）
 没配 `NESTORY_S3_*` 时自动退回本地目录，接口行为一致（`mode: "proxy"`），本地开发和 e2e 不用外部依赖。
 冒烟测试：先起服务，再 `python backend/_media_smoke.py http://127.0.0.1:8000`。
 
+## 每日备份
+
+`backend/scheduler.py` 在进程内起一个后台线程，每天 `NESTORY_BACKUP_AT`（北京时间，默认 `03:30`）
+把 `users` / `sessions` / `user_state` / `media` 四张表导成 gzip JSON，传到
+`{NESTORY_S3_PREFIX}/backups/` 下，只留 `NESTORY_BACKUP_KEEP` 份（默认 14）。
+启动时如果当天还没备份且已经过点，会立刻补一次；列目录失败时不重试，避免每轮都传。
+
+```bash
+python backend/backup.py --dry-run                 # 只统计，不写远程
+python backend/backup.py --keep 30                 # 立刻备份一次，保留 30 份
+python backend/backup.py --restore <key>           # 整表恢复（会覆盖当前数据）
+```
+
+状态在 `/api/health` 的 `backup` 字段里：`enabled` / `at` / `last` / `kept` / `lastError`。
+
 ## 代码结构
 
 ```
@@ -210,8 +225,10 @@ backend/
 ├── db.py            # MySQL 连接、db.env、建表、ping
 ├── auth.py          # PBKDF2 哈希、会话令牌、Cookie 属性
 ├── accounts.py      # 注册/登录/me/logout、读写每个账号的 AppState
-├── storage.py       # 对象存储/本地磁盘、SigV4 预签名、put/delete/get_url
+├── storage.py       # 对象存储/本地磁盘、SigV4、put/put_stream/list_keys/download
 ├── media.py         # media 表：登记、配额、确认、列表、删除
+├── backup.py        # 导出/恢复四张表（gzip JSON → 对象存储）
+├── scheduler.py     # 进程内每日备份调度
 ├── setup_mysql.py   # 首次建库、建账号、建表
 ├── mysql_ctl.py     # 便携 MySQL 的 start/stop/status/ensure
 ├── llm.py           # prompt 组装 + 模型调用 + 解析 + 本地兜底
