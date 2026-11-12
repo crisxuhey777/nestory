@@ -53,8 +53,6 @@ export type RegisterInput = {
   email: string
   password: string
   nickname: string
-  babyName: string
-  babyBirthday: string
 }
 
 export class ApiError extends Error {

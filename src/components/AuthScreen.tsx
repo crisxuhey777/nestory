@@ -10,19 +10,11 @@ type Props = {
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
-function todayLocal(): string {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
-
 export default function AuthScreen({ onSignIn, onSignUp }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [nickname, setNickname] = useState('')
-  const [babyName, setBabyName] = useState('')
-  const [babyBirthday, setBabyBirthday] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -49,14 +41,6 @@ export default function AuthScreen({ onSignIn, onSignUp }: Props) {
         setError('给自己起个昵称吧')
         return
       }
-      if (!babyName.trim()) {
-        setError('请填写宝宝的昵称')
-        return
-      }
-      if (!babyBirthday) {
-        setError('请选择宝宝的生日')
-        return
-      }
     }
 
     setBusy(true)
@@ -64,7 +48,7 @@ export default function AuthScreen({ onSignIn, onSignUp }: Props) {
       if (mode === 'login') {
         await onSignIn(mail, password)
       } else {
-        await onSignUp({ email: mail, password, nickname: nickname.trim(), babyName: babyName.trim(), babyBirthday })
+        await onSignUp({ email: mail, password, nickname: nickname.trim() })
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '出了点问题，请稍后再试')
@@ -142,29 +126,6 @@ export default function AuthScreen({ onSignIn, onSignUp }: Props) {
                     maxLength={60}
                     value={nickname}
                     onChange={(e) => setNickname(e.target.value)}
-                  />
-                </label>
-
-                <label className="field">
-                  <span className="field__label">宝宝昵称</span>
-                  <input
-                    className="input"
-                    type="text"
-                    placeholder="例如：小柚"
-                    maxLength={60}
-                    value={babyName}
-                    onChange={(e) => setBabyName(e.target.value)}
-                  />
-                </label>
-
-                <label className="field">
-                  <span className="field__label">宝宝生日</span>
-                  <input
-                    className="input"
-                    type="date"
-                    max={todayLocal()}
-                    value={babyBirthday}
-                    onChange={(e) => setBabyBirthday(e.target.value)}
                   />
                 </label>
               </>

@@ -96,6 +96,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (quote) return
+    if (!state.baby.name.trim() || !state.baby.birthday) return
     let cancelled = false
     const cacheKey = quoteCacheKey(state.baby.name, state.baby.birthday)
 
@@ -232,19 +233,22 @@ export default function HomePage() {
   }
 
   const now = Date.now()
-  const birth = new Date(fromISODate(state.baby.birthday, 6, 20))
-  const age = ageBetween(birth, new Date(now))
+  const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
+  const birth = hasBirth ? new Date(fromISODate(state.baby.birthday, 6, 20)) : null
+  const age = birth ? ageBetween(birth, new Date(now)) : null
   const stats = feedStats(state.feeds, state.reminder.intervalMinutes, now)
   const sleepMinutes = sleepMinutesToday(state.sleeps, now)
   const diapers = diaperCountsToday(state.diapers, now)
   const sleepSegments = state.sleeps.filter((s) => isSameDay(s.startedAt, now)).length
   const latest = latestGrowth(state.growths)
   const prev = previousGrowth(state.growths)
-  const next = daysUntilAnniversary(state.baby.birthday, new Date(now))
+  const next = hasBirth ? daysUntilAnniversary(state.baby.birthday, new Date(now)) : null
   const albumPhotos = [...state.photos].sort((a, b) => b.at - a.at)
   const photos = albumPhotos.slice(0, HOME.recentPhotos)
   const photoById = new Map(albumPhotos.map((photo) => [photo.id, photo]))
   const milestones = [...state.milestones].sort((a, b) => b.at - a.at).slice(0, HOME.milestones)
+  const hasActivity =
+    state.feeds.length + state.sleeps.length + state.diapers.length + state.growths.length > 0
 
   const remainingMin = stats.nextReminderAt ? (stats.nextReminderAt - now) / 60000 : null
   const remindProgress = stats.nextReminderAt
@@ -284,6 +288,11 @@ export default function HomePage() {
           ))}
         </div>
         <div className="hero__veil" />
+        {heroSlides.length === 0 ? (
+          <div className="hero__empty-mark" aria-hidden="true">
+            <NestoryMark size={132} tone="light" />
+          </div>
+        ) : null}
         <div className="hero__top">
           <div className="hero__brand">
             <NestoryMark size={30} tone="light" />
@@ -303,13 +312,19 @@ export default function HomePage() {
 
         <div className="hero__content">
           <div className="hero__date">{chineseDate(now)}</div>
-          <h1 className="hero__name">{state.baby.name}</h1>
+          <h1 className="hero__name">{state.baby.name.trim() || '宝宝'}</h1>
           <div className="hero__meta">
-            <span>{ageLabel(age)}</span>
-            <i />
-            <span>第 {age.totalDays} 天</span>
-            <i />
-            <span>{state.baby.birthday.replace(/-/g, '.')} 出生</span>
+            {age ? (
+              <>
+                <span>{ageLabel(age)}</span>
+                <i />
+                <span>第 {age.totalDays} 天</span>
+                <i />
+                <span>{state.baby.birthday.replace(/-/g, '.')} 出生</span>
+              </>
+            ) : (
+              <span>还没有填写出生日期，可在「我的」里补上</span>
+            )}
           </div>
           {quote?.label ? <p className="hero__occasion">{quote.label}</p> : null}
           <p className="hero__quote">
@@ -385,17 +400,23 @@ export default function HomePage() {
           </div>
           <div className="overview__cell">
             <div className="overview__value" style={{ fontSize: 'calc(19px * var(--type-scale, 1))', letterSpacing: 0 }}>
-              {stats.lastAt ? relativeFromNow(stats.lastAt, now) : '—'}
+              {stats.lastAt ? relativeFromNow(stats.lastAt, now) : '还没有'}
             </div>
             <div className="overview__label">
               最近喂养{stats.lastAt ? ` · ${timeHM(stats.lastAt)}` : ''}
             </div>
           </div>
           <div className="overview__cell">
-            <div className="overview__value">
-              {latest?.weightKg?.toFixed(1) ?? '—'}
-              <small>kg</small>
-            </div>
+            {latest?.weightKg != null ? (
+              <div className="overview__value">
+                {latest.weightKg.toFixed(1)}
+                <small>kg</small>
+              </div>
+            ) : (
+              <div className="overview__value" style={{ fontSize: 'calc(19px * var(--type-scale, 1))', letterSpacing: 0 }}>
+                还没有
+              </div>
+            )}
             <div className="overview__label">
               最近体重{weightDelta ? ` · 较上次 +${weightDelta.toFixed(1)}` : ''}
             </div>
@@ -439,7 +460,7 @@ export default function HomePage() {
 
       </section>
 
-      <section className="section" style={{ marginTop: 26 }}>
+      <section className="section" style={{ marginTop: 26, display: hasActivity ? undefined : 'none' }}>
         <div className={`ai-card${ai.status === 'done' ? ' ai-card--done' : ''}`}>
           <div className="ai-card__head">
             <span className="ai-card__badge">
@@ -481,19 +502,26 @@ export default function HomePage() {
 
       <section className="section" style={{ marginTop: 30 }}>
         <SectionHead title="最近的成长瞬间" en="Recent moments" action="全部照片" onAction={() => navigate('album')} />
-        <div className="strip">
-          {photos.map((p) => (
-            <button key={p.id} className="strip__item" onClick={() => navigate('album')} aria-label={p.caption}>
-              <img src={p.thumb} alt={p.caption} loading="lazy" />
-              {p.kind === 'live' ? <span className="strip__badge">LIVE</span> : null}
-              {p.kind === 'video' ? (
-                <span className="strip__badge">
-                  <Icon name="play" size={8} />
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        {photos.length ? (
+          <div className="strip">
+            {photos.map((p) => (
+              <button key={p.id} className="strip__item" onClick={() => navigate('album')} aria-label={p.caption}>
+                <img src={p.thumb} alt={p.caption} loading="lazy" />
+                {p.kind === 'live' ? <span className="strip__badge">LIVE</span> : null}
+                {p.kind === 'video' ? (
+                  <span className="strip__badge">
+                    <Icon name="play" size={8} />
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button className="home-empty" type="button" onClick={() => navigate('album')}>
+            <Icon name="camera" size={20} />
+            <span>还没有照片，去相册放进第一张</span>
+          </button>
+        )}
       </section>
 
       <section className="section" style={{ marginTop: 30 }}>
@@ -506,6 +534,11 @@ export default function HomePage() {
               <span className="story__date">{shortDate(m.at)}</span>
             </div>
           ))}
+          {milestones.length === 0 ? (
+            <button className="home-empty home-empty--plain" type="button" onClick={() => navigate('album')}>
+              还没有里程碑，把第一次翻身、第一颗牙记下来
+            </button>
+          ) : null}
         </div>
       </section>
 

@@ -75,9 +75,10 @@ def _ms_to_date(ms: int) -> date:
     return datetime.fromtimestamp(ms / 1000).date()
 
 
-def _day_from_state(baby: dict) -> date:
-    """AppState 里的 baby.birthday 是 YYYY-MM-DD 字符串；兼容早期毫秒值。"""
+def _day_from_state(baby: dict) -> date | None:
     raw = baby.get("birthday")
+    if not raw:
+        return None
     if isinstance(raw, (int, float)):
         return _ms_to_date(int(raw))
     if isinstance(raw, str):
@@ -85,16 +86,23 @@ def _day_from_state(baby: dict) -> date:
             return datetime.strptime(raw, "%Y-%m-%d").date()
         except ValueError:
             pass
-    raise ApiError(400, "invalid_state", "state.baby.birthday 应为 YYYY-MM-DD")
+    raise ApiError(400, "invalid_state", "state.baby.birthday should be YYYY-MM-DD")
 
 
 def _seed_state(baby_name: str, birthday: date) -> dict:
-    from app_state import build_state  # 延迟导入，避免 db 未连时就构建
+    from app_state import build_state
 
     state = build_state()
     state["baby"]["name"] = baby_name
     state["baby"]["birthday"] = birthday.isoformat()
     return state
+
+
+def _empty_state(baby_name: str = "", birthday: str = "") -> dict:
+    from app_state import build_empty_state
+
+    return build_empty_state(baby_name, birthday)
+
 
 
 def _public_user(row: dict) -> dict:
@@ -125,7 +133,7 @@ def _create_session(conn, user_id: int) -> str:
     return token
 
 
-def _save_state(conn, user_id: int, state: dict, baby_name: str, birthday: date) -> None:
+def _save_state(conn, user_id: int, state: dict, baby_name: str, birthday: date | None) -> None:
     payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
     with conn.cursor() as cur:
         cur.execute(
@@ -166,10 +174,13 @@ def _load_state(conn, row: dict) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # 老账号或数据损坏：用宝宝信息重建一份，并落库
-    birthday = row.get("baby_birthday") or date.today()
-    state = _seed_state(row.get("baby_name") or "宝宝", birthday)
-    _save_state(conn, row["id"], state, row.get("baby_name") or "宝宝", birthday)
+    # 老账号或数据损坏：建一份空状态，不再注入演示数据
+    birthday = row.get("baby_birthday")
+    state = _empty_state(
+        row.get("baby_name") or "",
+        birthday.isoformat() if birthday else "",
+    )
+    _save_state(conn, row["id"], state, row.get("baby_name") or "", birthday)
     return state
 
 
@@ -197,40 +208,36 @@ def register(data: dict) -> tuple[dict, dict, str]:
     email = _s(data.get("email")).lower()
     password = data.get("password") or ""
     nickname = _s(data.get("nickname")) or email.split("@")[0]
-    baby_name = _s(data.get("babyName")) or "宝宝"
-    birthday_text = _s(data.get("babyBirthday"))
 
     if not EMAIL_RE.match(email) or len(email) > 190:
-        raise ApiError(400, "invalid_email", "请输入有效的邮箱地址")
+        raise ApiError(400, "invalid_email", "invalid email")
     if len(password) < MIN_PASSWORD:
-        raise ApiError(400, "weak_password", f"密码至少 {MIN_PASSWORD} 位")
-    if len(password) > 128:
-        raise ApiError(400, "weak_password", "密码太长了")
-    if len(nickname) > 60 or len(baby_name) > 60:
-        raise ApiError(400, "invalid_name", "昵称请控制在 60 字以内")
+        raise ApiError(400, "weak_password", f"password needs at least {MIN_PASSWORD} characters")
+    if len(nickname) > 60:
+        raise ApiError(400, "invalid_name", "nickname is too long")
 
-    birthday = _birthday(birthday_text)
-    state = _seed_state(baby_name, birthday)
+    state = _empty_state()
 
     with _conn() as conn:
         if _user_row_by_email(conn, email):
-            raise ApiError(409, "email_exists", "这个邮箱已经注册过了")
+            raise ApiError(409, "email_exists", "email already registered")
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO users (email, password_hash, nickname, baby_name, baby_birthday)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                (email, auth.hash_password(password), nickname, baby_name, birthday),
+                (email, auth.hash_password(password), nickname, "", None),
             )
             user_id = cur.lastrowid
-        _save_state(conn, user_id, state, baby_name, birthday)
+        _save_state(conn, user_id, state, "", None)
         token = _create_session(conn, user_id)
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             row = cur.fetchone()
-    log.info("register user=%s email=%s baby=%s", user_id, _mask_email(email), baby_name)
+    log.info("register user=%s email=%s", user_id, _mask_email(email))
     return _public_user(row), state, token
+
 
 
 def login(data: dict) -> tuple[dict, dict, str]:
@@ -286,9 +293,9 @@ def save_state(token: str | None, state: dict) -> dict:
     if not token:
         raise ApiError(401, "unauthorized", "请先登录")
     baby = state.get("baby") or {}
-    baby_name = _s(baby.get("name")) or "宝宝"
+    baby_name = _s(baby.get("name")) or ""
     birthday = _day_from_state(baby)
-    baby["birthday"] = birthday.isoformat()
+    baby["birthday"] = birthday.isoformat() if birthday else ""
 
     with _conn() as conn:
         row = _user_row_by_token(conn, token)
@@ -314,8 +321,15 @@ def reset_state(token: str | None) -> dict:
         row = _user_row_by_token(conn, token)
         if not row:
             raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
-        birthday = row.get("baby_birthday") or date.today()
-        state = _seed_state(row.get("baby_name") or "宝宝", birthday)
-        _save_state(conn, row["id"], state, row.get("baby_name") or "宝宝", birthday)
+        birthday = row.get("baby_birthday")
+        if row.get("email") == "demo@nestory.local":
+            birthday = birthday or date.today()
+            state = _seed_state(row.get("baby_name") or "宝宝", birthday)
+        else:
+            state = _empty_state(
+                row.get("baby_name") or "",
+                birthday.isoformat() if birthday else "",
+            )
+        _save_state(conn, row["id"], state, row.get("baby_name") or "", birthday)
     log.info("state reset user=%s", row["id"])
     return {"ok": True, "state": state}

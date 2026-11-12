@@ -127,3 +127,25 @@ export const NOTIFICATION_LABELS: Record<
   string,
   { text: string; hint: string; action: string }
 >
+
+
+export const ONBOARDING: {
+  skippable: boolean
+  welcome: {
+    eyebrow: string
+    title: string
+    body: string
+    primary: string
+    skip: string
+  }
+  steps: readonly {
+    key: 'baby' | 'photo' | 'reminder'
+    eyebrow: string
+    title: string
+    body: string
+  }[]
+  genders: readonly { value: string; label: string }[]
+  intervals: readonly { value: number; label: string }[]
+  photoCaption: string
+  finish: string
+}

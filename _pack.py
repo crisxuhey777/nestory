@@ -25,7 +25,9 @@ ROOT_FILES = [
     "_e2e_viewport.mjs",
     "_e2e_tap.mjs",
     "_e2e_back.mjs",
+    "_e2e_exit.mjs",
     "_e2e_auth.mjs",
+    "_e2e_onboarding.mjs",
     "_e2e_autosave.mjs",
     "_login_session.mjs",
     "_shot.mjs",
@@ -47,7 +49,7 @@ with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         if os.path.exists(name):
             zf.write(name, name)
     for name in sorted(os.listdir("shots")):
-        keep = name.startswith(("final-", "sheet-", "e2e-")) or name in {
+        keep = name.startswith(("final-", "sheet-", "e2e-", "onboarding-")) or name in {
             "album-live-lightbox.png",
             "album-video-lightbox.png",
             "album-lightbox.png",

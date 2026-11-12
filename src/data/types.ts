@@ -46,7 +46,7 @@ export type Baby = {
   name: string
   birthday: string // ISO yyyy-mm-dd
   birthTime: string // HH:mm
-  gender: 'girl' | 'boy'
+  gender: 'girl' | 'boy' | ''
   birthWeightKg: number
   birthHeightCm: number
   birthHeadCm: number
@@ -100,4 +100,6 @@ export type AppState = {
   /** 当前登录/使用这台设备的家庭成员 id，由后端会话返回 */
   viewerId: string
   lastSyncedAt: number
+  /** false = 新账号还没完成/跳过引导；缺省视为已完成（兼容旧数据） */
+  onboarded?: boolean
 }

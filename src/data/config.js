@@ -194,3 +194,47 @@ export const NOTIFICATION_LABELS = {
   denied: { text: '已拒绝', hint: '可在浏览器设置中重新允许', action: '' },
   unsupported: { text: '不可用', hint: '当前浏览器不支持系统通知', action: '' },
 }
+
+
+export const ONBOARDING = {
+  skippable: true,
+  welcome: {
+    eyebrow: 'WELCOME',
+    title: '欢迎来到 Nestory',
+    body: '这里不会自动替你写好任何记录。先认识宝宝，再慢慢把小屋布置起来。',
+    primary: '开始设置',
+    skip: '跳过引导，直接使用',
+  },
+  steps: [
+    {
+      key: 'baby',
+      eyebrow: 'STEP 01 / 03',
+      title: '先认识一下宝宝',
+      body: '名字和生日只用来计算月龄，其他资料可以以后再补。',
+    },
+    {
+      key: 'photo',
+      eyebrow: 'STEP 02 / 03',
+      title: '放进第一张照片',
+      body: '选一张现在的照片做首页。没有也没关系，随时可以在相册添加。',
+    },
+    {
+      key: 'reminder',
+      eyebrow: 'STEP 03 / 03',
+      title: '要不要提醒你',
+      body: '提醒只是辅助。宝宝想吃的时候，随时都可以喂。',
+    },
+  ],
+  genders: [
+    { value: 'girl', label: '女孩' },
+    { value: 'boy', label: '男孩' },
+    { value: '', label: '暂不填写' },
+  ],
+  intervals: [
+    { value: 180, label: '每 3 小时' },
+    { value: 240, label: '每 4 小时' },
+    { value: 0, label: '先不提醒' },
+  ],
+  photoCaption: '来到家的第一天',
+  finish: '进入 Nestory',
+}

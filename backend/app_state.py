@@ -52,6 +52,42 @@ def _pick(source: dict, *keys):
     return {key: source[key] for key in keys if key in source}
 
 
+def build_empty_state(baby_name: str = "", birthday: str = "") -> dict:
+    """A brand-new account: no demo records, no photos, no family members."""
+    now = int(time.time() * 1000)
+    return {
+        "version": 3,
+        "baby": {
+            "name": baby_name,
+            "birthday": birthday,
+            "birthTime": "",
+            "gender": "",
+            "birthWeightKg": 0,
+            "birthHeightCm": 0,
+            "birthHeadCm": 0,
+            "birthplace": "",
+            "avatar": "",
+        },
+        "feeds": [],
+        "sleeps": [],
+        "diapers": [],
+        "growths": [],
+        "milestones": [],
+        "photos": [],
+        "heroPhotoIds": [],
+        "reminder": {
+            "enabled": False,
+            "intervalMinutes": 180,
+            "quietNight": True,
+            "vibration": True,
+        },
+        "family": [],
+        "viewerId": "",
+        "lastSyncedAt": now,
+        "onboarded": False,
+    }
+
+
 def build_state(now_ms: int | None = None) -> dict:
     now = int(time.time() * 1000) if now_ms is None else int(now_ms)
     today = start_of_day(now)

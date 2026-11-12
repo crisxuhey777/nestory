@@ -43,7 +43,10 @@ export default function GrowthPage() {
 
   const todayDiapers = [...state.diapers].sort((a, b) => b.at - a.at).slice(0, 8)
 
-  const ageText = ageLabel(ageBetween(new Date(fromISODate(state.baby.birthday)), new Date(now)))
+  const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
+  const ageText = hasBirth
+    ? ageLabel(ageBetween(new Date(fromISODate(state.baby.birthday)), new Date(now)))
+    : '还没有填写生日'
   const headMeta =
     tab === 'growth'
       ? `${ageText} · ${latest ? `最近测量 ${shortDate(latest.at)}` : '还没有测量记录'}`
@@ -123,7 +126,9 @@ export default function GrowthPage() {
             <div className="trend">
               <div className="trend__head">
                 <span className="trend__title">体重趋势</span>
-                <span className="trend__value">{latest?.weightKg?.toFixed(1)} kg</span>
+                <span className="trend__value">
+                  {latest?.weightKg != null ? `${latest.weightKg.toFixed(1)} kg` : '还没有数据'}
+                </span>
               </div>
               {weightPoints.length > 1 ? (
                 <Sparkline points={weightPoints} label="体重趋势" />

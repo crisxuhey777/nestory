@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../brand/icons'
-import { goBack, navigate } from '../lib/route'
+import { goBack, switchTab } from '../lib/route'
 import type { Route } from '../lib/route'
 import { useStore } from '../data/store'
 import { NAV_TABS } from '../data/config'
@@ -94,7 +94,7 @@ export function TabBar({ active }: { active: Route }) {
         <button
           key={t.route}
           className={`tab${active === t.route ? ' tab--on' : ''}`}
-          onClick={() => navigate(t.route)}
+          onClick={() => switchTab(t.route)}
           aria-current={active === t.route ? 'page' : undefined}
         >
           <span className="tab__dot" />

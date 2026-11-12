@@ -8,7 +8,7 @@ import type { FeedRecord } from '../data/types'
 import { clock, durationLabel, minutesLabel, shortSpan, startOfDay, timeHM } from '../lib/date'
 import { feedIntervals, feedStats, last7Days } from '../lib/stats'
 import type { FeedKind } from '../lib/stats'
-import { navigate } from '../lib/route'
+import { goBack, navigate } from '../lib/route'
 import { viewerName } from '../lib/viewer'
 import { FEED_DEFAULTS, FEED_METHODS, FEED_PRESETS } from '../data/config'
 
@@ -182,7 +182,7 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
     toast(editing ? '记录已更新，统计已重新计算' : `已记录喂养 · ${timeHM(record.startedAt)}`)
     resetComposer()
     if (quick) {
-      navigate('home')
+      goBack('home')
       return
     }
     window.scrollTo({ top: 0, behavior: 'smooth' })

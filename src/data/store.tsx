@@ -24,6 +24,7 @@ type Action =
   | { type: 'updateReminder'; reminder: Partial<Reminder> }
   | { type: 'sync'; at: number }
   | { type: 'hydrate'; state: AppState }
+  | { type: 'completeOnboarding'; patch: Partial<AppState> }
   | { type: 'reset' }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -64,6 +65,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, lastSyncedAt: action.at }
     case 'hydrate':
       return action.state
+    case 'completeOnboarding':
+      return { ...state, ...action.patch, onboarded: true }
     case 'reset':
       // 真正实现由 dispatch 包装函数拦截：调用后端重置并接管返回的 state
       return state

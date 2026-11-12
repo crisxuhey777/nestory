@@ -83,7 +83,14 @@ export default function ProfilePage() {
   const uploadRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const now = Date.now()
-  const age = ageBetween(new Date(fromISODate(state.baby.birthday, 6, 20)), new Date(now))
+  const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
+  const age = hasBirth ? ageBetween(new Date(fromISODate(state.baby.birthday, 6, 20)), new Date(now)) : null
+  const babyFacts = [
+    state.baby.gender === 'girl' ? '女孩' : state.baby.gender === 'boy' ? '男孩' : '',
+    state.baby.birthplace,
+    state.baby.birthWeightKg > 0 ? `出生 ${state.baby.birthWeightKg} kg` : '',
+    state.baby.birthHeightCm > 0 ? `${state.baby.birthHeightCm} cm` : '',
+  ].filter(Boolean)
 
   const openBaby = () => {
     setForm(toForm(state.baby))
@@ -92,8 +99,12 @@ export default function ProfilePage() {
 
   const saveBaby = () => {
     const name = form.name.trim()
-    if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(form.birthday) || !/^\d{2}:\d{2}$/.test(form.birthTime)) {
-      toast('请填写昵称、生日和出生时间')
+    if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(form.birthday)) {
+      toast('请填写昵称和生日')
+      return
+    }
+    if (form.birthTime && !/^\d{2}:\d{2}$/.test(form.birthTime)) {
+      toast('出生时间格式不正确')
       return
     }
     const birthTs = Date.parse(`${form.birthday}T00:00:00`)
@@ -201,26 +212,31 @@ export default function ProfilePage() {
 
       <div className="page__body">
         <section className="profile-hero">
-          <img className="profile-hero__avatar" src={state.baby.avatar} alt={state.baby.name} />
+          <img
+            className="profile-hero__avatar"
+            src={state.baby.avatar || '/brand/app-icon-180.png'}
+            alt={state.baby.name || '宝宝头像'}
+          />
           <div className="profile-hero__main">
-            <div className="profile-hero__name">{state.baby.name}</div>
+            <div className="profile-hero__name">{state.baby.name || '还没有宝宝资料'}</div>
             <div className="profile-hero__meta">
-              {ageLabel(age)} · {state.baby.birthday.replace(/-/g, '.')} {state.baby.birthTime} 出生
+              {age
+                ? `${ageLabel(age)} · ${state.baby.birthday.replace(/-/g, '.')}${state.baby.birthTime ? ` ${state.baby.birthTime}` : ''} 出生`
+                : '点右侧铅笔，填上昵称和生日'}
             </div>
-            <span className="profile-hero__badge">
-              <Icon name="sparkle" size={10} />
-              已珍藏 {age.totalDays} 天
-            </span>
+            {age ? (
+              <span className="profile-hero__badge">
+                <Icon name="sparkle" size={10} />
+                已珍藏 {age.totalDays} 天
+              </span>
+            ) : null}
           </div>
           <button className="profile-hero__edit" aria-label="编辑宝宝资料" onClick={openBaby}>
             <Icon name="edit" size={14} />
           </button>
         </section>
 
-        <p className="profile-hint">
-          {state.baby.gender === 'girl' ? '女孩' : '男孩'} · {state.baby.birthplace} · 出生{' '}
-          {state.baby.birthWeightKg} kg / {state.baby.birthHeightCm} cm
-        </p>
+        {babyFacts.length ? <p className="profile-hint">{babyFacts.join(' · ')}</p> : null}
 
         <section className="panel" style={{ marginTop: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -230,28 +246,31 @@ export default function ProfilePage() {
               邀请
             </button>
           </div>
-          <div className="family">
-            {state.family.map((m) => (
-              <button key={m.id} type="button" className="family__item" onClick={() => { setPermError(''); setMember(m) }}>
-                <span className="family__avatar" style={{ background: m.color }}>
-                  {m.name.slice(0, 1)}
-                </span>
-                <span className="family__name">{m.name}</span>
-              </button>
-            ))}
-            <button className="family__item" onClick={() => setShare(true)}>
-              <span className="family__add">
-                <Icon name="plus" size={15} />
-              </span>
-              <span className="family__name">添加</span>
-            </button>
-          </div>
-          {state.family.length === 0 ? (
+          {state.family.length ? (
+            <>
+              <div className="family">
+                {state.family.map((m) => (
+                  <button key={m.id} type="button" className="family__item" onClick={() => { setPermError(''); setMember(m) }}>
+                    <span className="family__avatar" style={{ background: m.color }}>
+                      {m.name.slice(0, 1)}
+                    </span>
+                    <span className="family__name">{m.name}</span>
+                  </button>
+                ))}
+                <button className="family__item" onClick={() => setShare(true)}>
+                  <span className="family__add">
+                    <Icon name="plus" size={15} />
+                  </span>
+                  <span className="family__name">添加</span>
+                </button>
+              </div>
+              <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
+                点头像可调整权限 · 长辈可以设为只读，看得见，也不必担心误改。
+              </p>
+            </>
+          ) : (
             <div className="empty">还没有家庭成员，邀请家人一起记录吧</div>
-          ) : null}
-          <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-            点头像可调整权限 · 长辈可以设为只读，看得见，也不必担心误改。
-          </p>
+          )}
         </section>
 
         <section className="panel" style={{ marginTop: 14 }}>

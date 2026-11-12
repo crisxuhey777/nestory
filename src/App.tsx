@@ -1,7 +1,8 @@
 import { TabBar, Toasts } from './components/Common'
-import { StoreProvider } from './data/store'
-import { useRoute } from './lib/route'
-import type { Route } from './lib/route'
+import ExitGuard from './components/ExitGuard'
+import Onboarding from './components/Onboarding'
+import { StoreProvider, useStore } from './data/store'
+import { TAB_ROUTES, useRoute } from './lib/route'
 import HomePage from './pages/Home'
 import FeedPage from './pages/Feed'
 import GrowthPage from './pages/Growth'
@@ -11,11 +12,19 @@ import RemindersPage from './pages/Reminders'
 import AboutPage from './pages/About'
 import SettingsPage from './pages/Settings'
 
-const TAB_ROUTES: Route[] = ['home', 'growth', 'album', 'profile']
-
 function Shell() {
   const { route, mode, viewKey } = useRoute()
+  const { state } = useStore()
   const isTab = TAB_ROUTES.includes(route)
+
+  if (state.onboarded === false) {
+    return (
+      <div className="app app--onboarding">
+        <Onboarding />
+        <Toasts />
+      </div>
+    )
+  }
 
   return (
     <div className="app">
@@ -34,6 +43,7 @@ function Shell() {
         {route === 'settings' ? <SettingsPage /> : null}
       </div>
       {isTab ? <TabBar active={route} /> : null}
+      <ExitGuard route={route} />
       <Toasts />
     </div>
   )

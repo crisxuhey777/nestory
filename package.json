@@ -19,6 +19,9 @@
     "test:e2e:viewport": "node _e2e_viewport.mjs",
     "test:e2e:tap": "node _e2e_tap.mjs",
     "test:e2e:back": "node _e2e_back.mjs",
+    "test:e2e:exit": "node _e2e_exit.mjs",
+    "test:e2e:auth": "node _e2e_auth.mjs",
+    "test:e2e:onboarding": "node _e2e_onboarding.mjs",
     "shots": "node _shot.mjs"
   },
   "dependencies": {

@@ -42,27 +42,64 @@ function parse(hash: string): Route {
 
 export type NavMode = 'none' | 'back'
 
+export const TAB_ROUTES: Route[] = ['home', 'growth', 'album', 'profile']
+
+const initialRoute = parse(window.location.hash)
+if (!window.location.hash) history.replaceState(history.state, '', '#/home')
+let trail: Route[] = [initialRoute]
+let depth = 0
 let pendingMode: NavMode = 'none'
 let navSeq = 0
 
-export function navigate(route: Route, from?: Route) {
-  pendingMode = 'none'
-  const next = `#/${route}${from ? `?from=${from}` : ''}`
-  if (window.location.hash === next) return
-  window.location.hash = next
+function emit() {
+  window.dispatchEvent(new Event('hashchange'))
   window.scrollTo({ top: 0, behavior: 'auto' })
 }
 
-/** 返回上一级：标记为 back，让新页面从左侧轻微滑入。 */
-export function goBack(route: Route, from?: Route) {
-  pendingMode = 'back'
+/**
+ * 进入下一级：新增一条历史记录，硬件返回会先回到上一级，而不是继续堆积。
+ * replace=true 用于底部 Tab 切换——同一层横向切换不应产生历史记录。
+ */
+export function navigate(route: Route, from?: Route, replace = false) {
   const next = `#/${route}${from ? `?from=${from}` : ''}`
-  if (window.location.hash === next) {
-    pendingMode = 'none'
+  if (window.location.hash === next) return
+
+  trail = trail.slice(0, depth + 1)
+  if (replace) {
+    history.replaceState(history.state, '', next)
+    trail[depth] = route
+  } else {
+    // 新页面不继承退出确认哨兵，哨兵只留在被压在下面的根层条目上
+    const nextState = { ...(history.state ?? {}) } as Record<string, unknown>
+    delete nextState.nestoryExitGuard
+    history.pushState(nextState, '', next)
+    trail.push(route)
+    depth += 1
+  }
+  pendingMode = 'none'
+  emit()
+}
+
+export function switchTab(route: Route) {
+  navigate(route, undefined, true)
+}
+
+/** 返回上一级：有上一层就交给浏览器回退，否则替换为上一级。 */
+export function goBack(route: Route, from?: Route) {
+  const next = `#/${route}${from ? `?from=${from}` : ''}`
+  if (window.location.hash === next) return
+
+  if (trail[depth - 1] === route) {
+    pendingMode = 'back'
+    history.back()
     return
   }
-  window.location.hash = next
-  window.scrollTo({ top: 0, behavior: 'auto' })
+
+  trail = trail.slice(0, depth + 1)
+  trail[depth] = route
+  history.replaceState(history.state, '', next)
+  pendingMode = 'back'
+  emit()
 }
 
 /** 读取 `#/xxx?from=yyy` 里的来源，用于决定二级页的返回目标。 */
@@ -70,6 +107,22 @@ export function getRouteFrom(): Route | null {
   const match = window.location.hash.match(/[?&]from=([a-z]+)/)
   const from = match?.[1]
   return from && (ROUTES as string[]).includes(from) ? (from as Route) : null
+}
+
+/** 系统返回被退出确认拦截后，取消时把地址恢复到用户原本所在的根页面。 */
+export function restoreRoute(route: Route) {
+  const next = `#/${route}`
+  if (window.location.hash === next) return
+  trail = trail.slice(0, depth + 1)
+  trail[depth] = route
+  history.replaceState(history.state, '', next)
+  pendingMode = 'none'
+  emit()
+}
+
+/** 当前地址对应的路由（供系统返回等浏览器事件读取）。 */
+export function currentRoute(): Route {
+  return parse(window.location.hash)
 }
 
 export function useRoute() {
@@ -81,10 +134,34 @@ export function useRoute() {
 
   useEffect(() => {
     const onChange = () => {
-      const mode = pendingMode
+      const next = parse(window.location.hash)
+      let mode = pendingMode
       pendingMode = 'none'
+
+      if (mode === 'back') {
+        // history.back() 或「替换为上一级」
+        if (trail[depth - 1] === next) depth = Math.max(0, depth - 1)
+        else {
+          trail = trail.slice(0, depth + 1)
+          trail[depth] = next
+        }
+        trail = trail.slice(0, depth + 1)
+      } else if (trail[depth - 1] === next) {
+        // 用户按浏览器/系统返回
+        depth = Math.max(0, depth - 1)
+        mode = 'back'
+        trail = trail.slice(0, depth + 1)
+      } else if (trail[depth + 1] === next) {
+        depth += 1
+      } else if (trail[depth] !== next) {
+        // 直接改地址栏/Page.navigate：与浏览器历史保持一致，补一条 trail
+        trail = trail.slice(0, depth + 1)
+        trail.push(next)
+        depth += 1
+      }
+
       navSeq += 1
-      setView({ route: parse(window.location.hash), mode, key: navSeq })
+      setView({ route: next, mode, key: navSeq })
       window.scrollTo({ top: 0, behavior: 'auto' })
     }
     window.addEventListener('hashchange', onChange)

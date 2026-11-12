@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const BASE = 'http://127.0.0.1:5178'
+const BASE = 'http://localhost:5178'
 const port = 9900 + Math.floor(Math.random() * 90)
 const profile = mkdtempSync(join(tmpdir(), 'nestory-auth-e2e-'))
 const chrome = spawn(
@@ -99,23 +99,29 @@ try {
   await evaluate(setInput('.auth input[type=email]', email))
   await evaluate(setInput('.auth input[type=password]', 'nestory123'))
   await evaluate(setInput('.auth input[autocomplete=nickname]', 'E2E 妈妈'))
-  await evaluate(setInput('.auth input[placeholder="例如：小柚"]', '小满'))
-  await evaluate(setInput('.auth input[type=date]', '2026-08-02'))
   await sleep(200)
   await evaluate(`document.querySelector('.auth form').requestSubmit()`)
+  const onboarding = await waitFor('!!document.querySelector(".onboarding__welcome")', 25000)
+  check('注册后进入新手引导', onboarding)
+  await evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent.includes('跳过引导')).click()`)
   const registered = await waitFor('!document.querySelector(".auth") && !!document.querySelector(".hero__name")', 25000)
   const hero = registered ? await evaluate('document.querySelector(".hero__name").textContent') : ''
-  check('注册后进入首页', registered, `宝宝=${hero}`)
+  check('跳过引导后进入首页', registered, `宝宝=${hero}`)
 
   await send('Page.reload')
   await sleep(1500)
   const stayed = await waitFor('!document.querySelector(".auth") && !!document.querySelector(".hero__name")', 15000)
   check('刷新后仍保持登录', stayed)
 
-  await evaluate(`location.hash = '#/profile'`)
+  await evaluate(`[...document.querySelectorAll('.tabbar button')].find((b) => b.textContent.includes('我的'))?.click()`)
   await sleep(800)
-  const account = await evaluate('document.querySelector(".switch-row__sub")?.textContent || ""')
-  check('账号面板显示邮箱', account === email, account)
+  await waitFor('!!document.querySelector(".profile-hero")')
+  const account = await evaluate(`[...document.querySelectorAll('.switch-row__sub')].map((el) => el.textContent).join('|')`)
+  check('账号面板显示邮箱', account.includes(email), account)
+  if (!account.includes(email)) {
+    console.log('DBG hash', await evaluate('location.href'))
+    console.log('DBG body', (await evaluate('document.body.innerText')).slice(0, 300))
+  }
 
   await evaluate(`[...document.querySelectorAll('.section-head__action')].find(b => b.textContent.trim() === '退出登录')?.click()`)
   const signedOut = await waitFor('!!document.querySelector(".auth")', 15000)
