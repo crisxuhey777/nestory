@@ -186,7 +186,7 @@ spec:
         - name: ${{ defaults.app_name }}
       containers:
         - name: ${{ defaults.app_name }}
-          image: ghcr.io/crisxuhey777/nestory:0.3.3
+          image: ghcr.io/crisxuhey777/nestory:0.3.5
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
@@ -232,6 +232,12 @@ spec:
               value: nestory
             - name: NESTORY_COOKIE_SECURE
               value: '1'
+            - name: NESTORY_VERSION
+              value: '0.3.5'
+            - name: NESTORY_BACKUP_AT
+              value: '03:30'
+            - name: NESTORY_BACKUP_KEEP
+              value: '14'
             - name: S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

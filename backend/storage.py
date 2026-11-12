@@ -27,6 +27,7 @@ import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -228,15 +229,33 @@ def presign(method: str, key: str, expires: int = 3600, content_type: str = "") 
     )
 
 
-def _signed_request(method: str, key: str, body: bytes = b"", content_type: str = "") -> urllib.request.Request:
-    """服务端自己发请求时用（代理上传、删除）。"""
+def _query_string(query: dict[str, str] | None) -> str:
+    if not query:
+        return ""
+    return "&".join(
+        f"{_uri_encode(k)}={_uri_encode(str(v))}" for k, v in sorted(query.items())
+    )
+
+
+def _signed_request(
+    method: str,
+    key: str,
+    body: bytes = b"",
+    content_type: str = "",
+    query: dict[str, str] | None = None,
+) -> urllib.request.Request:
+    """服务端自己发请求时用（代理上传、删除、列目录）。"""
     cfg = config()
     now = dt.datetime.now(dt.timezone.utc)
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
     date_stamp = now.strftime("%Y%m%d")
     scope = f"{date_stamp}/{cfg['region']}/s3/aws4_request"
     host = _host(cfg)
-    canonical_uri = _canonical_uri(f"/{cfg['bucket']}/{key.lstrip('/')}")
+    if key:
+        canonical_uri = _canonical_uri(f"/{cfg['bucket']}/{key.lstrip('/')}")
+    else:
+        canonical_uri = _canonical_uri(f"/{cfg['bucket']}")
+    canonical_query = _query_string(query)
     payload_hash = hashlib.sha256(body).hexdigest()
 
     headers = {"Host": host, "X-Amz-Date": amz_date}
@@ -247,7 +266,14 @@ def _signed_request(method: str, key: str, body: bytes = b"", content_type: str 
         f"{k.lower()}:{headers[k].strip()}\n" for k in sorted(headers)
     )
     canonical_request = "\n".join(
-        [method.upper(), canonical_uri, "", canonical_headers, signed_headers, payload_hash]
+        [
+            method.upper(),
+            canonical_uri,
+            canonical_query,
+            canonical_headers,
+            signed_headers,
+            payload_hash,
+        ]
     )
     string_to_sign = "\n".join(
         [
@@ -267,8 +293,11 @@ def _signed_request(method: str, key: str, body: bytes = b"", content_type: str 
         f"SignedHeaders={signed_headers}, Signature={signature}"
     )
     headers.pop("Host")
+    url = f"{_base_url(cfg)}{canonical_uri}"
+    if canonical_query:
+        url = f"{url}?{canonical_query}"
     return urllib.request.Request(
-        f"{_base_url(cfg)}{canonical_uri}",
+        url,
         data=body if body else None,
         method=method.upper(),
         headers=headers,
@@ -328,6 +357,50 @@ def put_stream(key: str, path: Path, content_type: str = "") -> int:
     raise RuntimeError("no storage configured")
 
 
+def list_keys(prefix: str = "", limit: int = 1000) -> list[str]:
+    """列出某个前缀下的对象键（备份清理用）。"""
+    mode = driver()
+    if mode == "local":
+        root = _local_root()
+        if not root.exists():
+            return []
+        wanted = prefix.strip("/")
+        found = []
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = path.relative_to(root).as_posix()
+            if not wanted or key.startswith(wanted):
+                found.append(key)
+        return sorted(found)[:limit]
+    if mode != "s3":
+        return []
+    keys: list[str] = []
+    token = ""
+    while True:
+        query = {"list-type": "2", "prefix": prefix, "max-keys": "1000"}
+        if token:
+            query["continuation-token"] = token
+        request = _signed_request("GET", "", query=query)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                payload = response.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(300).decode("utf-8", "replace")
+            raise RuntimeError(f"LIST {prefix} failed: {exc.code} {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"LIST {prefix} failed: {exc.reason}") from exc
+        root = ET.fromstring(payload)
+        for node in root.findall(".//{*}Contents/{*}Key"):
+            if node.text:
+                keys.append(node.text)
+        truncated = root.findtext(".//{*}IsTruncated") == "true"
+        token = root.findtext(".//{*}NextContinuationToken") or ""
+        if not truncated or not token or len(keys) >= limit:
+            break
+    return keys[:limit]
+
+
 def delete(key: str) -> None:
     mode = driver()
     if mode == "s3":
@@ -336,6 +409,24 @@ def delete(key: str) -> None:
         path = local_path(key)
         if path.exists():
             path.unlink()
+
+
+def download(key: str) -> bytes:
+    """服务端取回整个对象（恢复备份用；大文件请走流式）。"""
+    mode = driver()
+    if mode == "local":
+        return local_path(key).read_bytes()
+    if mode != "s3":
+        raise RuntimeError("no storage configured")
+    request = _signed_request("GET", key)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(300).decode("utf-8", "replace")
+        raise RuntimeError(f"GET {key} failed: {exc.code} {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GET {key} failed: {exc.reason}") from exc
 
 
 def get_url(key: str, expires: int = 3600) -> str:

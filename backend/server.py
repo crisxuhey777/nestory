@@ -48,6 +48,7 @@ import llm  # noqa: E402
 import logsetup  # noqa: E402
 import media as media_store  # noqa: E402
 import quote as daily_quote  # noqa: E402
+import scheduler  # noqa: E402
 import storage  # noqa: E402
 from app_state import build_state  # noqa: E402
 
@@ -257,6 +258,7 @@ class Handler(BaseHTTPRequestHandler):
             self._ok(
                 {
                     "status": "ok" if db_ok else "degraded",
+                    "version": os.environ.get("NESTORY_VERSION", "dev"),
                     "time": int(time.time() * 1000),
                     "timezone": time.strftime("%Z"),
                     "db": {"ok": db_ok, "detail": db_detail},
@@ -265,6 +267,7 @@ class Handler(BaseHTTPRequestHandler):
                         "model": ai["model"],
                         "configured": bool(ai["key"]) or ai["provider"] == "pollinations",
                     },
+                    "backup": scheduler.status(),
                 }
             )
             return
@@ -872,6 +875,7 @@ def main() -> int:
             time.sleep(min(2 ** min(attempt, 4), 10))
 
     threading.Thread(target=_prepare_db, name="db-init", daemon=True).start()
+    scheduler.start()
 
     ai = llm.config()
     print("AI model", flush=True)

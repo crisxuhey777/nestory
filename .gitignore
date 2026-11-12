@@ -27,3 +27,4 @@ __pycache__/
 # sealos deploy artifacts (args.json 含 LLM key，deploy.yaml 含镜像拉取凭据)
 .sealos/*
 !.sealos/template.yaml
+_e2e_run.err

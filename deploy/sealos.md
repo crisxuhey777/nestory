@@ -100,7 +100,36 @@ python scripts/sealos-api.py deploy D:\OneDrive\桌面\NESTORY\.sealos\deploy.ya
 - 浏览器 Cookie 里 `nestory_session` 带 `Secure`（说明 HTTPS 生效）
 - AI 摘要页能出内容（`/api/ai/summary` 走智谱）
 
-## 5. 已知限制（和上线无关，但会先撞上）
+## 5. 每日备份（进程内调度）
+
+数据库备份没有用 CronJob：Sealos 的 6443（kubectl）在这台机器上时通时断，
+而应用本身已经握着 MySQL 和对象存储的凭据，交给同一个进程最省事。
+
+- 代码：`backend/backup.py`（导出 + 恢复）、`backend/scheduler.py`（每天定时）。
+- 触发：进程启动后后台线程每 5 分钟检查一次，到了 `NESTORY_BACKUP_AT`（固定北京时间，默认 `03:30`）
+  且当天还没有备份就执行一次；进程中途重启，漏掉的那天会补跑。
+- 产物：`{NESTORY_S3_PREFIX}/backups/YYYYmmdd-HHMMSS.json.gz`（UTC 命名），只留 `NESTORY_BACKUP_KEEP`
+  份（默认 14），旧的自动删。
+- 内容：`users` / `sessions` / `user_state` / `media` 四张表的全部行；datetime、Decimal、bytes 分别用
+  `{"$dt"}` / `{"$dec"}` / `{"$b64"}` 包装，能原样还原。
+- 观测：`GET /api/health` 的 `backup` 字段会带 `enabled` / `at` / `last` / `kept` / `lastError`。
+
+手动恢复（在能拿到凭据的环境里，比如 `kubectl exec` 进容器）：
+
+```bash
+python backend/backup.py --restore nestory/backups/20261112-213755.json.gz
+```
+
+恢复会在一个事务里 `DELETE` 这四张表再整表写回（期间关掉外键检查），**会覆盖当前数据**，先确认 key 再执行。
+
+| 变量 | 作用 | 默认 |
+| --- | --- | --- |
+| `NESTORY_BACKUP_ENABLED` | 关掉调度就设 `0` | `1` |
+| `NESTORY_BACKUP_AT` | 每天执行时间（北京时间） | `03:30` |
+| `NESTORY_BACKUP_KEEP` | 保留份数 | `14` |
+| `NESTORY_BACKUP_TICK` | 检查间隔（秒） | `300` |
+
+## 6. 已知限制（和上线无关，但会先撞上）
 
 - 照片/视频已经走对象存储：`state` 里只存 `/api/media/blob/<id>` 短地址，媒体元数据在 MySQL `media` 表，
   字节在 S3 桶里。上线前记得配 `NESTORY_S3_*`，否则媒体会落在容器磁盘上。
