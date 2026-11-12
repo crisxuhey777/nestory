@@ -26,13 +26,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import mimetypes
 import os
 import sys
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -47,6 +48,10 @@ import quote as daily_quote  # noqa: E402
 from app_state import build_state  # noqa: E402
 
 MAX_BODY = 12 * 1024 * 1024  # 整份 AppState（含压缩后的照片 data URL）可能到几 MB
+
+# 传了 --static-dir（或 NESTORY_STATIC_DIR）时，同一个进程顺带把 dist/ 发出去，
+# 部署就只需要一个容器/一个端口；不传时行为和本地开发完全一致。
+STATIC_DIR: Path | None = None
 
 logger = logging.getLogger("nestory.http")
 
@@ -182,7 +187,8 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
         query = parse_qs(parsed.query)
 
-        if path in ("/", "/api"):
+        # 配了 --static-dir 时 "/" 交给前端 dist，" /api" 始终是自述接口
+        if path == "/api" or (path == "/" and STATIC_DIR is None):
             ai = llm.config()
             self._ok(
                 {
@@ -248,7 +254,64 @@ class Handler(BaseHTTPRequestHandler):
             self._ok({"source": "src/data/test_config.js", "data": fixtures.as_dict()})
             return
 
+        if STATIC_DIR is not None and self._serve_static(parsed.path):
+            return
+
         self._error(404, "not_found", path)
+
+    # ------------------------------------------------------------ 静态资源
+
+    def _serve_static(self, raw_path: str) -> bool:
+        """把构建好的前端目录当作单页应用发出去。
+
+        只认 ``--static-dir`` 指定的根目录；没传就永远不会被调用，本地开发行为不变。
+        返回 True 表示已经响应，False 表示交给后面的 404。
+        """
+        assert STATIC_DIR is not None
+        root = STATIC_DIR
+        try:
+            rel = unquote(raw_path).lstrip("/") or "index.html"
+            target = (root / rel).resolve()
+        except (OSError, ValueError):
+            return False
+        if target != root and root not in target.parents:
+            return False  # 挡住 ../ 之类的目录穿越
+        if target.is_dir():
+            target = target / "index.html"
+        if not target.is_file():
+            if Path(rel).suffix:
+                return False  # 缺失的静态文件老实还 404
+            target = root / "index.html"  # 前端路由（/album、/growth…）回落到入口
+            if not target.is_file():
+                return False
+        try:
+            body = target.read_bytes()
+        except OSError:
+            return False
+
+        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in (
+            "application/javascript",
+            "application/json",
+            "image/svg+xml",
+        ):
+            ctype = f"{ctype}; charset=utf-8"
+        cache = (
+            "no-cache"
+            if target.name in ("index.html", "sw.js")
+            else "public, max-age=31536000, immutable"
+        )
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", cache)
+            self.end_headers()
+            self.wfile.write(body)
+            self._log(200, len(body))
+        except (BrokenPipeError, ConnectionResetError):
+            return True
+        return True
 
     def do_POST(self) -> None:  # noqa: N802
         try:
@@ -480,9 +543,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    global STATIC_DIR
     parser = argparse.ArgumentParser(description="Nestory local backend (MySQL accounts + AI)")
     parser.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="bind port (default 8000)")
+    parser.add_argument(
+        "--static-dir",
+        default=os.environ.get("NESTORY_STATIC_DIR"),
+        help="serve a built frontend from this dir (SPA fallback); env NESTORY_STATIC_DIR",
+    )
     parser.add_argument("--no-ai-probe", action="store_true", help="skip the startup AI probe")
     parser.add_argument("--log-level", default=None, help="DEBUG / INFO / WARNING / ERROR (default INFO)")
     parser.add_argument("--log-dir", default=None, help="where nestory.log lives (default backend/logs)")
@@ -501,11 +570,20 @@ def main() -> int:
     log = logsetup.setup(level=log_level, log_dir=log_dir, file=not args.no_log_file)
     logsetup.install_exception_hooks(log)
 
+    if args.static_dir:
+        candidate = Path(args.static_dir).expanduser().resolve()
+        if (candidate / "index.html").is_file():
+            STATIC_DIR = candidate
+        else:
+            print(f"static   : ignored, no index.html in {candidate}", flush=True)
+
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
 
     print("Nestory local backend", flush=True)
     print(f"  http://{args.host}:{args.port}/", flush=True)
+    if STATIC_DIR is not None:
+        print(f"  static   : {STATIC_DIR}", flush=True)
 
     cfg = db.config()
     print("MySQL", flush=True)

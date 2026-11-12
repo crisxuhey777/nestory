@@ -1,0 +1,27 @@
+# 构建上下文瘦身：这些都是本机/文档/测试产物，镜像里用不到
+node_modules
+dist
+.git
+.gitignore
+_archive
+_test
+shots
+_brand
+deploy
+backend/logs
+backend/__pycache__
+backend/**.env
+**/*.pyc
+
+# 大文件与文档
+*.zip
+*.docx
+*.png
+Nestory-*.md
+PRD.docx
+
+# 本机脚本（e2e / 截图 / 打包 / 品牌生成）
+_e2e*.mjs
+_shot*.mjs
+_*.mjs
+_*.py
