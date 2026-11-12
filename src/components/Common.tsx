@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Icon } from '../brand/icons'
-import { navigate } from '../lib/route'
+import { goBack, navigate } from '../lib/route'
 import type { Route } from '../lib/route'
 import { useStore } from '../data/store'
 import { NAV_TABS } from '../data/config'
@@ -23,7 +24,7 @@ export function ScreenHead({
       <button
         className="icon-btn icon-btn--plain"
         aria-label="返回"
-        onClick={() => (onBack ? onBack() : navigate(back))}
+        onClick={() => (onBack ? onBack() : goBack(back))}
       >
         <Icon name="chevronLeft" size={22} />
       </button>
@@ -110,7 +111,7 @@ export function TabBar({ active }: { active: Route }) {
 export function Toasts() {
   const { toasts, dismiss } = useStore()
   if (!toasts.length) return null
-  return (
+  return createPortal(
     <div className="toast-layer" aria-live="polite">
       {toasts.map((t) => (
         <button key={t.id} className="toast" onClick={() => dismiss(t.id)}>
@@ -118,7 +119,8 @@ export function Toasts() {
           {t.text}
         </button>
       ))}
-    </div>
+    </div>,
+    document.body,
   )
 }
 

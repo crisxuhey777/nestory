@@ -1,0 +1,3 @@
+# Nestory 后端的全部运行依赖（其余均为 Python 标准库）
+# rsa extra 会装上 cryptography：MySQL 8 默认 caching_sha2_password 首次认证需要 RSA 加密
+PyMySQL[rsa]>=1.1.1,<2

@@ -155,8 +155,8 @@ await sleep(350)
 check(
   '最后一位管理员不能被降级',
   (await text('.perm--on')).includes('家庭管理员') &&
-    (await evaluate(`[...document.querySelectorAll('.toast')].map((t) => t.textContent).join('|')`)).includes('至少'),
-  await evaluate(`[...document.querySelectorAll('.toast')].map((t) => t.textContent.trim()).join(' / ')`),
+    (await text('.perm-error')).includes('至少'),
+  await text('.perm-error'),
 )
 
 // ---------- avatar upload ----------

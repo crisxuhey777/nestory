@@ -78,6 +78,7 @@ export default function ProfilePage() {
   const [babyOpen, setBabyOpen] = useState(false)
   const [form, setForm] = useState<BabyForm>(() => toForm(state.baby))
   const [member, setMember] = useState<FamilyMember | null>(null)
+  const [permError, setPermError] = useState('')
   const [removing, setRemoving] = useState<FamilyMember | null>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
@@ -142,11 +143,12 @@ export default function ProfilePage() {
     if (!member || member.permission === next) return
     const admins = state.family.filter((m) => m.permission === 'admin')
     if (member.permission === 'admin' && next !== 'admin' && admins.length <= 1) {
-      toast('至少要保留一位家庭管理员')
+      setPermError('至少要保留一位家庭管理员')
       return
     }
     dispatch({ type: 'updateFamilyMember', id: member.id, patch: { permission: next } })
     setMember({ ...member, permission: next })
+    setPermError('')
     toast(`已把${member.name}的权限改为「${PERMISSION_OPTIONS.find((o) => o.value === next)?.label}」`)
   }
 
@@ -238,7 +240,7 @@ export default function ProfilePage() {
           </div>
           <div className="family">
             {state.family.map((m) => (
-              <button key={m.id} type="button" className="family__item" onClick={() => setMember(m)}>
+              <button key={m.id} type="button" className="family__item" onClick={() => { setPermError(''); setMember(m) }}>
                 <span className="family__avatar" style={{ background: m.color }}>
                   {m.name.slice(0, 1)}
                 </span>
@@ -468,7 +470,7 @@ export default function ProfilePage() {
 
       <Sheet
         open={member !== null}
-        onClose={() => setMember(null)}
+        onClose={() => { setMember(null); setPermError('') }}
         title={member ? member.name : '家庭成员'}
         desc="管理员可以调整每位家人的权限，其他成员只能查看。"
         footer={
@@ -521,6 +523,11 @@ export default function ProfilePage() {
                   )
                 })}
               </div>
+              {permError ? (
+                <p className="perm-error" role="status">
+                  {permError}
+                </p>
+              ) : null}
             </div>
           </>
         ) : null}

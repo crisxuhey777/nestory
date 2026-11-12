@@ -18,6 +18,7 @@
     "test:e2e:home": "node _e2e_home.mjs",
     "test:e2e:viewport": "node _e2e_viewport.mjs",
     "test:e2e:tap": "node _e2e_tap.mjs",
+    "test:e2e:back": "node _e2e_back.mjs",
     "shots": "node _shot.mjs"
   },
   "dependencies": {

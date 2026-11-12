@@ -12,7 +12,8 @@
 Windows 下直接**双击 `start_server.bat`**：
 
 1. 检查 8000 端口：已在跑 Nestory 就提示并退出，被别的程序占用会说明原因；
-2. `mysql_ctl.py ensure` 自动拉起便携 MySQL（未初始化会自动初始化）；
+2. `mysql_ctl.py ensure` 自动拉起便携 MySQL（未初始化会自动初始化；它在后台无窗口运行，
+   错误日志在 `%LOCALAPPDATA%\Nestory\mysql-data\mysqld.log`）；
 3. 启动后端，并打印一次真实的模型探测。
 
 也可以手动在命令行启动：

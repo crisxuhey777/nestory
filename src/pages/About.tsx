@@ -1,5 +1,5 @@
 import { ScreenHead } from '../components/Common'
-import { navigate } from '../lib/route'
+import { goBack } from '../lib/route'
 import { APP } from '../data/config'
 
 const DAYS = [
@@ -123,7 +123,7 @@ export default function AboutPage() {
           <p className="about-sign">Nestory 小团队</p>
         </section>
 
-        <button className="btn btn--quiet btn--full" style={{ marginTop: 26 }} onClick={() => navigate('profile')}>
+        <button className="btn btn--quiet btn--full" style={{ marginTop: 26 }} onClick={() => goBack('profile')}>
           回到我的家庭
         </button>
 

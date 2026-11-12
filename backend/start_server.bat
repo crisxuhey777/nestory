@@ -61,8 +61,14 @@ exit /b 1
 
 :port_free
 echo   Database: ensuring MySQL on 127.0.0.1:3306 ...
-%PY% "%~dp0mysql_ctl.py" ensure
-if errorlevel 1 (
+if defined PYW (
+  %PYW% "%~dp0mysql_ctl.py" ensure >nul 2>nul
+) else (
+  %PY% "%~dp0mysql_ctl.py" ensure
+)
+set "DBCODE=%ERRORLEVEL%"
+title Nestory backend
+if not "%DBCODE%"=="0" (
   echo.
   echo   [ERROR] MySQL did not start.
   echo   Check the log under %%LOCALAPPDATA%%\Nestory\mysql-data\mysqld.log

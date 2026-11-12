@@ -855,6 +855,29 @@
   font-variant-numeric: tabular-nums;
 }
 
+.amount__input {
+  min-width: 2ch;
+  max-width: 4.2ch;
+  padding: 0 0 3px;
+  border: 0;
+  border-bottom: 1px dashed rgba(48, 75, 59, 0.22);
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  caret-color: var(--forest);
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.amount__input::placeholder {
+  color: var(--ink-4);
+  opacity: 0.55;
+}
+
+.amount__input:focus {
+  border-bottom-color: var(--champagne-deep);
+  background: rgba(215, 198, 164, 0.14);
+}
+
 .amount__unit {
   font-size: calc(11px * var(--type-scale, 1));
   letter-spacing: 0.08em;
@@ -2607,6 +2630,17 @@
 .perm-list {
   display: grid;
   gap: 8px;
+}
+
+.perm-error {
+  margin: 10px 2px 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--champagne-tint);
+  color: var(--forest);
+  font-size: calc(11.5px * var(--type-scale, 1));
+  line-height: 1.5;
+  letter-spacing: 0.01em;
 }
 
 .perm {

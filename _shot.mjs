@@ -4,9 +4,11 @@ import { spawn } from 'node:child_process'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { seedSession } from './_login_session.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const [url, out, w = '430', h = '900', dpr = '2', fontSize] = process.argv.slice(2)
+const login = process.env.SHOT_LOGIN === '1'
 const port = 9400 + Math.floor(Math.random() * 400)
 const profile = mkdtempSync(join(tmpdir(), 'nestory-shot-'))
 
@@ -69,6 +71,7 @@ const send = (method, params = {}) =>
 
 await send('Page.enable')
 await send('Runtime.enable')
+if (login) await seedSession(send, url)
 await send('Emulation.setDeviceMetricsOverride', {
   width: Number(w),
   height: Number(h),

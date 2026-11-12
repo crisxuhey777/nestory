@@ -10,12 +10,22 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import secrets
 from datetime import datetime, timedelta
 
 ITERATIONS = 260_000
 SESSION_DAYS = 30
 COOKIE_NAME = "nestory_session"
+
+
+def _secure_flag() -> str:
+    """HTTPS 部署时设 NESTORY_COOKIE_SECURE=1，让会话 Cookie 只走加密连接。
+
+    默认关闭：本地 http://127.0.0.1 调试时带 Secure 的 Cookie 会被浏览器丢掉。
+    """
+    raw = os.environ.get("NESTORY_COOKIE_SECURE", "").strip().lower()
+    return "; Secure" if raw in {"1", "true", "yes", "on"} else ""
 
 
 def _b64(raw: bytes) -> str:
@@ -60,12 +70,12 @@ def session_expiry(days: int = SESSION_DAYS) -> datetime:
 def cookie_header(token: str, days: int = SESSION_DAYS) -> str:
     return (
         f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; "
-        f"Max-Age={days * 86400}"
+        f"Max-Age={days * 86400}{_secure_flag()}"
     )
 
 
 def clear_cookie() -> str:
-    return f"{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    return f"{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{_secure_flag()}"
 
 
 def parse_cookie(header: str | None) -> str | None:

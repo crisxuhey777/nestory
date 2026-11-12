@@ -20,6 +20,14 @@ const METHOD_META = FEED_METHODS.reduce(
   {} as Record<FeedKind, { label: string; icon: IconName }>,
 )
 
+const MAX_ML = 999
+
+/** 输入框允许空值；只收 0–3 位数字，最大 999 ml。 */
+function readMl(raw: string) {
+  const digits = raw.replace(/\D/g, '').slice(0, 3)
+  return digits ? Number(digits) : 0
+}
+
 /** HH:MM → 时间戳；base 给定时沿用那天的日期（编辑旧记录），否则用今天/昨天。 */
 function timeToStart(value: string, base?: number) {
   if (!/^\d{2}:\d{2}$/.test(value)) return base ?? Date.now()
@@ -360,21 +368,32 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
             <div className="editor">
               <div className="editor__head">
                 <span className="editor__title">瓶喂母乳量</span>
-                <span className="editor__note">实际喂入</span>
+                <span className="editor__note">实际喂入 · 可输入</span>
               </div>
               <div className="amount">
                 <div className="amount__value">
-                  <span className="amount__num">{bottleMl}</span>
+                  <input
+                    className="amount__num amount__input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    aria-label="瓶喂母乳奶量，单位毫升"
+                    placeholder="0"
+                    value={bottleMl || ''}
+                    onChange={(e) => setBottleMl(readMl(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    style={{ width: `${Math.max(2, String(bottleMl || 0).length)}ch` }}
+                  />
                   <span className="amount__unit">ML</span>
                 </div>
                 <div className="stepper">
                   <button className="stepper__btn" onClick={() => setBottleMl((v) => Math.max(0, v - 10))} aria-label="减少 10 毫升">
                     −10
                   </button>
-                  <button className="stepper__btn" onClick={() => setBottleMl((v) => v + 10)} aria-label="增加 10 毫升">
+                  <button className="stepper__btn" onClick={() => setBottleMl((v) => Math.min(MAX_ML, v + 10))} aria-label="增加 10 毫升">
                     +10
                   </button>
-                  <button className="stepper__btn" onClick={() => setBottleMl((v) => v + 30)} aria-label="增加 30 毫升">
+                  <button className="stepper__btn" onClick={() => setBottleMl((v) => Math.min(MAX_ML, v + 30))} aria-label="增加 30 毫升">
                     +30
                   </button>
                 </div>
@@ -397,21 +416,32 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
             <div className="editor">
               <div className="editor__head">
                 <span className="editor__title">配方奶量</span>
-                <span className="editor__note">按实际喂入记录</span>
+                <span className="editor__note">按实际喂入 · 可输入</span>
               </div>
               <div className="amount">
                 <div className="amount__value">
-                  <span className="amount__num">{formulaMl}</span>
+                  <input
+                    className="amount__num amount__input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    aria-label="配方奶奶量，单位毫升"
+                    placeholder="0"
+                    value={formulaMl || ''}
+                    onChange={(e) => setFormulaMl(readMl(e.target.value))}
+                    onFocus={(e) => e.currentTarget.select()}
+                    style={{ width: `${Math.max(2, String(formulaMl || 0).length)}ch` }}
+                  />
                   <span className="amount__unit">ML</span>
                 </div>
                 <div className="stepper">
                   <button className="stepper__btn" onClick={() => setFormulaMl((v) => Math.max(0, v - 10))} aria-label="减少 10 毫升">
                     −10
                   </button>
-                  <button className="stepper__btn" onClick={() => setFormulaMl((v) => v + 10)} aria-label="增加 10 毫升">
+                  <button className="stepper__btn" onClick={() => setFormulaMl((v) => Math.min(MAX_ML, v + 10))} aria-label="增加 10 毫升">
                     +10
                   </button>
-                  <button className="stepper__btn" onClick={() => setFormulaMl((v) => v + 30)} aria-label="增加 30 毫升">
+                  <button className="stepper__btn" onClick={() => setFormulaMl((v) => Math.min(MAX_ML, v + 30))} aria-label="增加 30 毫升">
                     +30
                   </button>
                 </div>

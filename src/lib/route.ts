@@ -40,9 +40,27 @@ function parse(hash: string): Route {
   return (ROUTES as string[]).includes(raw) ? (raw as Route) : 'home'
 }
 
+export type NavMode = 'none' | 'back'
+
+let pendingMode: NavMode = 'none'
+let navSeq = 0
+
 export function navigate(route: Route, from?: Route) {
+  pendingMode = 'none'
   const next = `#/${route}${from ? `?from=${from}` : ''}`
   if (window.location.hash === next) return
+  window.location.hash = next
+  window.scrollTo({ top: 0, behavior: 'auto' })
+}
+
+/** 返回上一级：标记为 back，让新页面从左侧轻微滑入。 */
+export function goBack(route: Route, from?: Route) {
+  pendingMode = 'back'
+  const next = `#/${route}${from ? `?from=${from}` : ''}`
+  if (window.location.hash === next) {
+    pendingMode = 'none'
+    return
+  }
   window.location.hash = next
   window.scrollTo({ top: 0, behavior: 'auto' })
 }
@@ -55,11 +73,18 @@ export function getRouteFrom(): Route | null {
 }
 
 export function useRoute() {
-  const [route, setRoute] = useState<Route>(() => parse(window.location.hash))
+  const [view, setView] = useState<{ route: Route; mode: NavMode; key: number }>(() => ({
+    route: parse(window.location.hash),
+    mode: 'none',
+    key: 0,
+  }))
 
   useEffect(() => {
     const onChange = () => {
-      setRoute(parse(window.location.hash))
+      const mode = pendingMode
+      pendingMode = 'none'
+      navSeq += 1
+      setView({ route: parse(window.location.hash), mode, key: navSeq })
       window.scrollTo({ top: 0, behavior: 'auto' })
     }
     window.addEventListener('hashchange', onChange)
@@ -68,9 +93,9 @@ export function useRoute() {
   }, [])
 
   useEffect(() => {
-    document.title = TITLES[route]
-  }, [route])
+    document.title = TITLES[view.route]
+  }, [view.route])
 
   const go = useCallback((r: Route) => navigate(r), [])
-  return { route, go }
+  return { route: view.route, mode: view.mode, viewKey: view.key, go }
 }

@@ -16,3 +16,8 @@ Nestory-V3.0-source.zip
 tsconfig.tsbuildinfo
 .DS_Store
 Thumbs.db
+
+# python
+__pycache__/
+*.pyc
+.venv/

@@ -35,7 +35,23 @@ MYSQLADMIN = BASE / "bin" / "mysqladmin.exe"
 LOG = DATA / "mysqld.log"
 
 DETACHED_PROCESS = 0x00000008
+CREATE_NEW_CONSOLE = 0x00000010
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+SW_HIDE = 0
+
+
+def _hidden_console() -> tuple[int, subprocess.STARTUPINFO]:
+    """Give mysqld its own *hidden* console.
+
+    MySQL on Windows starts the real server as a child process. If the parent has
+    no console, that child allocates one, and Windows Terminal shows it as a new
+    tab titled with the mysqld path. Giving the parent a hidden console means the
+    child inherits it, so nothing is ever shown.
+    """
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = SW_HIDE
+    return CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP, info
 
 
 def port_open(host: str = "127.0.0.1", port: int = PORT, timeout: float = 0.4) -> bool:
@@ -86,6 +102,7 @@ def start() -> int:
             return 1
 
     print(f"starting mysqld on 127.0.0.1:{PORT} ...")
+    flags, startupinfo = _hidden_console()
     subprocess.Popen(
         [
             str(MYSQLD),
@@ -99,7 +116,8 @@ def start() -> int:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+        creationflags=flags,
+        startupinfo=startupinfo,
     )
 
     deadline = time.time() + 30
