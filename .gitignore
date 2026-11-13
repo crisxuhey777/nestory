@@ -28,3 +28,15 @@ __pycache__/
 .sealos/*
 !.sealos/template.yaml
 _e2e_run.err
+
+# local one-off scripts and scratch files
+tmp_*.txt
+_patch_*.py
+shots/debug-*.png
+
+# one-off capture comparisons
+shots/*-merged.png
+shots/*-now.png
+shots/*-current.png
+shots/*-check.png
+shots/*drag*.png
