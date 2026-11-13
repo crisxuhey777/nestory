@@ -1158,7 +1158,7 @@
 .measure__eyebrow {
   font-size: calc(8.5px * var(--type-scale, 1));
   letter-spacing: 0.2em;
-  color: rgba(249, 247, 241, 0.5);
+  color: rgba(249, 247, 241, 0.72);
 }
 
 .measure__date {
@@ -1231,7 +1231,7 @@
 .measure__label {
   font-size: calc(8.5px * var(--type-scale, 1));
   letter-spacing: 0.14em;
-  color: rgba(249, 247, 241, 0.5);
+  color: rgba(249, 247, 241, 0.72);
 }
 
 .measure__item b {
@@ -1253,7 +1253,7 @@
 .measure__item i {
   font-style: normal;
   font-size: calc(9px * var(--type-scale, 1));
-  color: rgba(249, 247, 241, 0.46);
+  color: rgba(249, 247, 241, 0.7);
 }
 
 .segmented {
@@ -2965,7 +2965,7 @@
   font-family: var(--font-serif);
   font-size: calc(15px * var(--type-scale, 1));
   letter-spacing: 0.02em;
-  color: var(--champagne-deep);
+  color: #7c663d;
 }
 
 .about-day__title {
