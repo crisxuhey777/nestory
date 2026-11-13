@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react'
 import { Icon } from '../brand/icons'
 import { ScreenHead } from '../components/Common'
 import { useStore } from '../data/store'
-import { REMINDER_INTERVALS } from '../data/config'
+import { NOTIFICATION_LABELS, REMINDER_INTERVALS } from '../data/config'
 import { minutesLabel, timeHM } from '../lib/date'
+import { notificationPermission, notify, requestNotificationPermission } from '../lib/notify'
+import { isStandalone } from '../lib/pwa'
 import { getRouteFrom } from '../lib/route'
 import { feedStats } from '../lib/stats'
 
@@ -12,10 +15,43 @@ export default function RemindersPage() {
   const now = Date.now()
   const stats = feedStats(state.feeds, r.intervalMinutes, now)
   const remaining = stats.nextReminderAt ? (stats.nextReminderAt - now) / 60000 : null
+  const [permission, setPermission] = useState(() => notificationPermission())
+  const standalone = isStandalone()
+
+  useEffect(() => {
+    const sync = () => setPermission(notificationPermission())
+    window.addEventListener('focus', sync)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      window.removeEventListener('focus', sync)
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [])
 
   const update = (patch: Partial<typeof r>, msg = '提醒设置已更新') => {
     dispatch({ type: 'updateReminder', reminder: patch })
     toast(msg)
+  }
+
+  const askNotify = async () => {
+    const next = permission === 'granted' ? permission : await requestNotificationPermission()
+    setPermission(next)
+    if (next === 'granted') {
+      if (!r.enabled) update({ enabled: true }, '通知已开启，喂养提醒会安静地出现')
+      else toast('通知已开启，喂养提醒会安静地出现')
+    } else if (next === 'denied') {
+      toast('通知被浏览器拦住了，可在地址栏的站点设置里重新允许')
+    } else {
+      toast('当前浏览器不支持系统通知，会继续用应用内提示')
+    }
+  }
+
+  const testNotify = async () => {
+    const result = await notify('该喂奶啦', '这是一条测试提醒，到点时的提醒会长这样。', {
+      tag: 'nestory-test',
+      vibrate: r.vibration,
+    })
+    toast(result.ok ? '测试通知已发送' : '通知没发出去，到点时会用应用内提示')
   }
 
   const from = getRouteFrom()
@@ -36,6 +72,39 @@ export default function RemindersPage() {
               它提醒你时间，但不能替代宝宝的饥饿信号。宝宝想吃的时候，随时都可以喂。
             </div>
           </div>
+        </div>
+
+        <div className="panel" style={{ marginTop: 14 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            Notifications
+          </div>
+          <div className="switch-row">
+            <div>
+              <div className="switch-row__title">系统通知</div>
+              <div className="switch-row__sub">
+                {NOTIFICATION_LABELS[permission]?.text ?? permission} ·{' '}
+                {NOTIFICATION_LABELS[permission]?.hint ?? '到点时会用应用内提示'}
+              </div>
+            </div>
+            {permission === 'granted' ? (
+              <button className="btn btn--quiet btn--sm" onClick={testNotify}>
+                发送测试通知
+              </button>
+            ) : permission === 'unsupported' ? (
+              <span className="setting__value" style={{ paddingRight: 0 }}>
+                不可用
+              </span>
+            ) : (
+              <button className="btn btn--quiet btn--sm" onClick={askNotify}>
+                开启通知
+              </button>
+            )}
+          </div>
+          <p className="switch-row__sub" style={{ marginTop: 6 }}>
+            {standalone
+              ? '已安装到桌面，APP 在后台时提醒也能通过系统通知送达。'
+              : 'iPhone 请先「分享 → 添加到主屏幕」，Android 建议安装到桌面；之后提醒才能在后台送达。'}
+          </p>
         </div>
 
         <div className="panel" style={{ marginTop: 14 }}>
@@ -118,7 +187,9 @@ export default function RemindersPage() {
                 {!r.enabled
                   ? '已关闭'
                   : stats.nextReminderAt
-                    ? `${timeHM(stats.nextReminderAt)}${remaining != null && remaining > 0 ? ` · ${minutesLabel(remaining)}后` : ' · 现在'}`
+                    ? remaining != null && remaining > 0
+                      ? `${timeHM(stats.nextReminderAt)} · ${minutesLabel(remaining)}后`
+                      : `${timeHM(stats.nextReminderAt)} · 该喂奶了`
                     : '记录后开始计算'}
               </span>
             </div>

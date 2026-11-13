@@ -6,6 +6,8 @@ import { ApiError, api, isAppState } from './api'
 import AuthScreen from '../components/AuthScreen'
 import BootScreen from '../components/Boot'
 import { normalizeBirthState } from '../lib/birth'
+import { haptic } from '../lib/notify'
+import { useReminderAlert } from '../lib/useReminderAlert'
 
 export { isAppState }
 
@@ -29,6 +31,18 @@ type Action =
   | { type: 'hydrate'; state: AppState }
   | { type: 'completeOnboarding'; patch: Partial<AppState> }
   | { type: 'reset' }
+
+/** 触感反馈只给「保存一条记录」这类动作，切换开关不会震动。 */
+const HAPTIC_ACTIONS: ReadonlySet<Action['type']> = new Set<Action['type']>([
+  'addFeed',
+  'updateFeed',
+  'deleteFeed',
+  'addSleep',
+  'endSleep',
+  'addDiaper',
+  'addGrowth',
+  'addPhoto',
+])
 
 function rawReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -220,6 +234,9 @@ function ReadyStore({
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2600)
   }, [])
 
+  // 到点提醒：有系统通知权限就走通知，否则退回应用内提示
+  useReminderAlert(state, toast)
+
   const saveChain = useRef<Promise<unknown>>(Promise.resolve())
   const latestState = useRef(state)
   const dirty = useRef(false)
@@ -277,6 +294,8 @@ function ReadyStore({
           .catch((error) => toast(error instanceof Error ? error.message : '重置失败'))
         return
       }
+      // 记录保存成功时给一次很轻的振动（可在提醒中心关闭）
+      if (HAPTIC_ACTIONS.has(action.type) && latestState.current.reminder.vibration) haptic(8)
       apply(action)
     },
     [toast],
