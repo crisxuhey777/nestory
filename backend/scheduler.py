@@ -15,6 +15,7 @@ imagePullSecrets 复制一份。代价是进程重启会重算下一次执行时
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import os
 import threading
 import time
@@ -22,6 +23,8 @@ import time
 import backup as backup_job
 import db
 import storage
+
+log = logging.getLogger("nestory.backup")
 
 TZ = dt.timezone(dt.timedelta(hours=8))
 TICK = 300
@@ -44,13 +47,23 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _int_env(name: str, default: int, minimum: int) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name) or default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _schedule() -> tuple[int, int]:
     raw = (os.environ.get("NESTORY_BACKUP_AT") or "03:30").strip()
     hour, _, minute = raw.partition(":")
     try:
-        return int(hour), int(minute or 0)
+        h, m = int(hour), int(minute or 0)
     except ValueError:
         return 3, 30
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return 3, 30
+    return h, m
 
 
 def status() -> dict:
@@ -83,7 +96,7 @@ def _run(keep: int) -> None:
     try:
         result = backup_job.backup(keep, dry_run=False)
     except Exception as exc:  # noqa: BLE001
-        print(f"backup   : FAILED · {exc}", flush=True)
+        log.warning("backup failed: %s", exc)
         with _lock:
             _state["lastError"] = str(exc)
         return
@@ -91,8 +104,20 @@ def _run(keep: int) -> None:
         _state["last"] = result["key"]
         _state["lastRunAt"] = int(time.time() * 1000)
         _state["lastError"] = None
-    print(f"backup   : ok · {result['key']} · kept {keep}", flush=True)
+    log.info("backup ok key=%s kept=%s", result["key"], result.get("kept"))
     _latest()
+
+
+def _key_local_date(key: str | None) -> dt.date | None:
+    """备份 key 里的时间是 UTC（20261112-214059），换算成北京时间再比日期。"""
+    if not key:
+        return None
+    stem = key.rsplit("/", 1)[-1].removesuffix(".json.gz")
+    try:
+        utc = dt.datetime.strptime(stem, "%Y%m%d-%H%M%S").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+    return utc.astimezone(TZ).date()
 
 
 def _due() -> bool:
@@ -106,9 +131,8 @@ def _due() -> bool:
         if _state["lastError"] and _state["lastError"].startswith("list failed"):
             # 列目录失败时别盲目重跑，否则每个 tick 都上传一份
             return False
-    # 备份文件名用的是 UTC 日期（20261112-214059），别拿本地日期去比
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
-    return latest is None or stamp not in latest
+    last_date = _key_local_date(latest)
+    return last_date is None or last_date < now.date()
 
 
 def _loop(keep: int, tick: int) -> None:
@@ -127,23 +151,23 @@ def _loop(keep: int, tick: int) -> None:
         except Exception as exc:  # noqa: BLE001
             with _lock:
                 _state["lastError"] = str(exc)
-            print(f"backup   : scheduler error · {exc}", flush=True)
+            log.warning("scheduler error: %s", exc)
         time.sleep(tick)
 
 
 def start() -> threading.Thread | None:
     if not _bool_env("NESTORY_BACKUP_ENABLED", True):
-        print("backup   : disabled (NESTORY_BACKUP_ENABLED=0)", flush=True)
+        log.info("backup disabled (NESTORY_BACKUP_ENABLED=0)")
         return None
     if storage.driver() is None:
-        print("backup   : skipped, no object storage configured", flush=True)
+        log.info("backup skipped, no object storage configured")
         return None
-    keep = int(os.environ.get("NESTORY_BACKUP_KEEP", "14") or 14)
-    tick = int(os.environ.get("NESTORY_BACKUP_TICK", str(TICK)) or TICK)
+    keep = _int_env("NESTORY_BACKUP_KEEP", 14, minimum=1)
+    tick = _int_env("NESTORY_BACKUP_TICK", TICK, minimum=30)
     hour, minute = _schedule()
     with _lock:
         _state.update(enabled=True, at=f"{hour:02d}:{minute:02d}")
     thread = threading.Thread(target=_loop, args=(keep, tick), name="backup", daemon=True)
     thread.start()
-    print(f"backup   : daily at {hour:02d}:{minute:02d} (+08:00), keep {keep}", flush=True)
+    log.info("backup daily at %02d:%02d (+08:00), keep %s", hour, minute, keep)
     return thread

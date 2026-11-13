@@ -80,6 +80,24 @@ def _int(value, upper: int) -> int | None:
     return number if 0 < number <= upper else None
 
 
+def _float(value, upper: float) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0 < number <= upper else None
+
+
+def _sweep_pending(user_id: int) -> None:
+    """清掉一天前只登记、从未上传成功的 pending 行，避免永久占配额。"""
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM media WHERE user_id = %s AND state = 'pending' "
+            "AND created_at < NOW() - INTERVAL 1 DAY",
+            (user_id,),
+        )
+
+
 def presign(user: dict, payload: dict) -> dict:
     """登记一条媒体并给出上传方式。"""
     if storage.driver() is None:
@@ -87,6 +105,7 @@ def presign(user: dict, payload: dict) -> dict:
             503, "storage_unavailable", "还没配置对象存储（NESTORY_S3_* 或 NESTORY_MEDIA_DIR）"
         )
     kind, mime, size, sha = _validate(payload)
+    _sweep_pending(user["id"])
     used = usage(user["id"])["bytes"]
     if used + size > storage.quota_bytes():
         raise accounts.ApiError(413, "quota_exceeded", "这个账号的媒体空间用完了")
@@ -109,7 +128,7 @@ def presign(user: dict, payload: dict) -> dict:
                 size,
                 _int(payload.get("width"), 20000),
                 _int(payload.get("height"), 20000),
-                payload.get("durationSec") or None,
+                _float(payload.get("durationSec"), 86400),
                 sha or None,
             ),
         )
@@ -163,7 +182,7 @@ def listing(user: dict) -> dict:
             """
             SELECT id, kind, bytes, mime, width, height, duration_sec, created_at
             FROM media
-            WHERE user_id = %s AND deleted_at IS NULL
+            WHERE user_id = %s AND deleted_at IS NULL AND state = 'ready'
             ORDER BY created_at DESC
             LIMIT 500
             """,
@@ -194,7 +213,10 @@ def listing(user: dict) -> dict:
 def remove(user: dict, media_id: str) -> dict:
     row = row_for(user, media_id)
     with _conn() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE media SET deleted_at = %s WHERE id = %s", (time.strftime("%Y-%m-%d %H:%M:%S"), media_id))
+        cur.execute(
+            "UPDATE media SET deleted_at = %s WHERE id = %s AND user_id = %s",
+            (time.strftime("%Y-%m-%d %H:%M:%S"), media_id, user["id"]),
+        )
     try:
         storage.delete(row["object_key"])
     except Exception:  # noqa: BLE001 - 对象已不在也无所谓

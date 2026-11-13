@@ -76,7 +76,15 @@ def dump() -> dict:
     return payload
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name) or default))
+    except (TypeError, ValueError):
+        return default
+
+
 def backup(keep: int, dry_run: bool) -> dict:
+    keep = max(1, int(keep))  # 0 会让 keys[0:] 把所有历史备份都删掉
     data = dump()
     counts = {name: len(rows) for name, rows in data["tables"].items()}
     raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -130,6 +138,9 @@ def restore(key: str) -> int:
     conn = db.connect()
     order = list(TABLES)
     try:
+        # db.connect() 默认 autocommit=True，直接清表会让每条语句立刻生效，
+        # 中途失败就留下一个被清空且无法回滚的库。恢复必须显式关掉自动提交。
+        conn.autocommit(False)
         with conn.cursor() as cur:
             cur.execute("SET FOREIGN_KEY_CHECKS = 0")
             for table in reversed(order):
@@ -143,12 +154,16 @@ def restore(key: str) -> int:
                 column_sql = ", ".join(f"`{c}`" for c in columns)
                 sql = f"INSERT INTO `{table}` ({column_sql}) VALUES ({placeholders})"
                 cur.executemany(sql, [[_value(row.get(c)) for c in columns] for row in rows])
-            cur.execute("SET FOREIGN_KEY_CHECKS = 1")
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET FOREIGN_KEY_CHECKS = 1")
+        except Exception:  # noqa: BLE001 - 连接已坏时不必再掩盖原始异常
+            pass
         conn.close()
     counts = {name: len(rows) for name, rows in data["tables"].items()}
     print(f"restored : {counts}", flush=True)
@@ -157,7 +172,7 @@ def restore(key: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Nestory 每日备份")
-    parser.add_argument("--keep", type=int, default=int(os.environ.get("NESTORY_BACKUP_KEEP", "14")))
+    parser.add_argument("--keep", type=int, default=_env_int("NESTORY_BACKUP_KEEP", 14))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--restore", metavar="KEY", help="从对象存储里的某个 key 恢复")
     args = parser.parse_args(argv)

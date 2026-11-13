@@ -15,6 +15,7 @@ import secrets
 from datetime import datetime, timedelta
 
 ITERATIONS = 260_000
+MAX_ITERATIONS = 2_000_000  # 防止被篡改的哈希把登录拖成 CPU DoS
 SESSION_DAYS = 30
 COOKIE_NAME = "nestory_session"
 
@@ -47,8 +48,11 @@ def verify_password(password: str, stored: str) -> bool:
         algo, iterations, salt_b64, hash_b64 = stored.split("$")
         if algo != "pbkdf2_sha256":
             return False
+        rounds = int(iterations)
+        if rounds < 1_000 or rounds > MAX_ITERATIONS:
+            return False
         digest = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), _unb64(salt_b64), int(iterations)
+            "sha256", password.encode("utf-8"), _unb64(salt_b64), rounds
         )
         return secrets.compare_digest(digest, _unb64(hash_b64))
     except (ValueError, TypeError):

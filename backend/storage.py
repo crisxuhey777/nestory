@@ -105,12 +105,30 @@ def driver() -> str | None:
     return None
 
 
+def _mb(value, default_mb: int) -> int:
+    try:
+        return max(1, int(float(value) * 1024 * 1024))
+    except (TypeError, ValueError):
+        return default_mb * 1024 * 1024
+
+
 def max_bytes() -> int:
-    return int(float(config()["max_mb"]) * 1024 * 1024)
+    return _mb(config()["max_mb"], 50)
 
 
 def quota_bytes() -> int:
-    return int(float(config()["quota_mb"]) * 1024 * 1024)
+    return _mb(config()["quota_mb"], 5120)
+
+
+def _endpoint_prefix(cfg: dict) -> str:
+    """endpoint 自带路径时（如 MinIO 的 http://host/minio）不能把它丢掉。"""
+    path = urllib.parse.urlsplit(cfg["endpoint"]).path.strip("/")
+    return f"/{path}" if path else ""
+
+
+def _object_path(cfg: dict, key: str = "") -> str:
+    base = f"{_endpoint_prefix(cfg)}/{cfg['bucket']}"
+    return f"{base}/{key.lstrip('/')}" if key else base
 
 
 def object_key(user_id: int, media_id: str, mime: str) -> str:
@@ -185,7 +203,7 @@ def presign(method: str, key: str, expires: int = 3600, content_type: str = "") 
     date_stamp = now.strftime("%Y%m%d")
     scope = f"{date_stamp}/{cfg['region']}/s3/aws4_request"
     host = _host(cfg)
-    path = f"/{cfg['bucket']}/{key.lstrip('/')}"
+    path = _object_path(cfg, key)
     canonical_uri = _canonical_uri(path)
 
     query = {
@@ -251,10 +269,7 @@ def _signed_request(
     date_stamp = now.strftime("%Y%m%d")
     scope = f"{date_stamp}/{cfg['region']}/s3/aws4_request"
     host = _host(cfg)
-    if key:
-        canonical_uri = _canonical_uri(f"/{cfg['bucket']}/{key.lstrip('/')}")
-    else:
-        canonical_uri = _canonical_uri(f"/{cfg['bucket']}")
+    canonical_uri = _canonical_uri(_object_path(cfg, key))
     canonical_query = _query_string(query)
     payload_hash = hashlib.sha256(body).hexdigest()
 
