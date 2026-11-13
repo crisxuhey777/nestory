@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { currentRoute, restoreRoute, TAB_ROUTES } from '../lib/route'
 import type { Route } from '../lib/route'
 import { Sheet } from './Sheet'
@@ -23,9 +23,10 @@ export default function ExitGuard({ route }: { route: Route }) {
   const isRoot = TAB_ROUTES.includes(route)
 
   const pushGuard = () => {
-    const state = (history.state ?? {}) as GuardState
-    if (state?.nestoryExitGuard) return
-    history.pushState({ ...state, nestoryExitGuard: true }, '', window.location.href)
+    const state = (history.state ?? {}) as GuardState & { nestoryExitGuardPath?: string }
+    const path = window.location.hash || '#/home'
+    if (state?.nestoryExitGuard && state.nestoryExitGuardPath === path) return
+    history.pushState({ ...state, nestoryExitGuard: true, nestoryExitGuardPath: path }, '', window.location.href)
   }
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function ExitGuard({ route }: { route: Route }) {
     if (isRoot && !openRef.current) pushGuard()
   }, [isRoot, route])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     prevRoot.current = isRoot
     prevRoute.current = route
     // 页面已经切换（例如确认框之外的跳转），退出确认不应跨页残留
@@ -55,16 +56,18 @@ export default function ExitGuard({ route }: { route: Route }) {
       const wasRoot = prevRoot.current
       const guarded = Boolean((history.state as GuardState)?.nestoryExitGuard)
 
-      if (atRoot && wasRoot && !guarded) {
-        const before = prevRoute.current
+      const now = currentRoute()
+      const backdrop = document.querySelector('.sheet-backdrop') as HTMLElement | null
+      if (atRoot && wasRoot && !guarded && backdrop) {
         // 有抽屉打开时，返回先关抽屉，不触发退出
-        const backdrop = document.querySelector('.sheet-backdrop') as HTMLElement | null
-        if (backdrop) {
-          backdrop.click()
-          restoreRoute(before)
-          pushGuard()
-          return
-        }
+        backdrop.click()
+        restoreRoute(prevRoute.current)
+        pushGuard()
+        return
+      }
+
+      if (atRoot && wasRoot && !guarded && now === prevRoute.current) {
+        const before = now
         // 刚消费掉根层哨兵：这是「在主界面按了返回」
         restoreRoute(before)
         restoreTo.current = null

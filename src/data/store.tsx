@@ -195,22 +195,53 @@ function ReadyStore({
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2600)
   }, [])
 
-  // 每次改动后自动保存（800ms 防抖）；AI 小结 hydrate 回来的新里程碑也会落库
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve())
+  const latestState = useRef(state)
+  const dirty = useRef(false)
+
+  useEffect(() => {
+    latestState.current = state
+  }, [state])
+
+  // 关闭/刷新页面前尽量把最后一次改动补发出去（小状态可用 keepalive）
+  useEffect(() => {
+    const flush = () => {
+      if (!dirty.current) return
+      void api.saveState(latestState.current, true).catch(() => undefined)
+    }
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
+  }, [])
+
+  // 每次改动后自动保存（800ms 防抖），并用串行链避免旧请求覆盖新状态
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false
       return
     }
+    const snapshot = state
+    latestState.current = snapshot
+    dirty.current = true
     const timer = setTimeout(() => {
-      void api.saveState(state).catch((error) => {
-        const now = Date.now()
-        if (now - lastSaveError.current < 8000) return
-        lastSaveError.current = now
-        toast(error instanceof Error ? `保存失败：${error.message}` : '保存失败')
-      })
+      saveChain.current = saveChain.current
+        .catch(() => undefined)
+        .then(() => api.saveState(snapshot))
+        .then(() => {
+          if (latestState.current === snapshot) dirty.current = false
+        })
+        .catch((error) => {
+          if (error instanceof ApiError && error.status === 401) {
+            signOut()
+            return
+          }
+          const now = Date.now()
+          if (now - lastSaveError.current < 8000) return
+          lastSaveError.current = now
+          toast(error instanceof Error ? `保存失败：${error.message}` : '保存失败')
+        })
     }, 800)
     return () => clearTimeout(timer)
-  }, [state, toast])
+  }, [state, toast, signOut])
 
   const dispatch = useCallback<Dispatch<Action>>(
     (action) => {

@@ -158,6 +158,13 @@ try {
   const shotProfile = await send('Page.captureScreenshot', { format: 'png' })
   writeFileSync('shots/onboarding-empty-profile.png', Buffer.from(shotProfile.data, 'base64'))
 
+  await clickText('通用设置')
+  await sleep(500)
+  const settingsText = await evaluate('document.body.innerText')
+  check('普通用户没有恢复示例数据', settingsText.includes('恢复示例数据') === false)
+  const shotSettings = await send('Page.captureScreenshot', { format: 'png' })
+  writeFileSync('shots/onboarding-empty-settings.png', Buffer.from(shotSettings.data, 'base64'))
+
   // ---------- B. guided path fills only user input ----------
   await register('引导测试')
   await goto('#/home')

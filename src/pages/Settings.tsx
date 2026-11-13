@@ -15,7 +15,7 @@ function formatBytes(bytes: number) {
 }
 
 export default function SettingsPage() {
-  const { state, dispatch, toast } = useStore()
+  const { state, dispatch, toast, user, signOut } = useStore()
   const { prefs, update } = usePrefs()
   const [resetOpen, setResetOpen] = useState(false)
   const [policy, setPolicy] = useState<'privacy' | 'terms' | null>(null)
@@ -81,6 +81,29 @@ export default function SettingsPage() {
 
       <div className="page__body">
         <section className="panel">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="eyebrow">账号</span>
+            <button className="section-head__action" onClick={signOut}>
+              退出登录
+            </button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+            <span className="setting__icon">
+              <Icon name="profile" size={18} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div className="switch-row__title">{user.nickname}</div>
+              <div className="switch-row__sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {user.email}
+              </div>
+            </div>
+          </div>
+          <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
+            记录会自动保存到这台电脑的 MySQL；退出后需要重新登录才能查看。
+          </p>
+        </section>
+
+        <section className="panel" style={{ marginTop: 14 }}>
           <div className="eyebrow" style={{ marginBottom: 2 }}>
             Appearance
           </div>
@@ -247,22 +270,24 @@ export default function SettingsPage() {
             照片会压缩后再保存，视频与 Live 短片存在账号的媒体库里，换设备登录也能看到。
           </p>
 
-          <div className="settings" style={{ marginTop: 6 }}>
-            <button className="setting" onClick={() => setResetOpen(true)}>
-              <span className="setting__icon">
-                <Icon name="sync" size={17} />
-              </span>
-              <span className="setting__main">
-                <span className="setting__title">恢复示例数据</span>
-                <span className="setting__sub" style={{ display: 'block' }}>
-                  回到初次打开时的样子，用于演示
+          {user.isDemo ? (
+            <div className="settings" style={{ marginTop: 6 }}>
+              <button className="setting" onClick={() => setResetOpen(true)}>
+                <span className="setting__icon">
+                  <Icon name="sync" size={17} />
                 </span>
-              </span>
-              <span className="setting__value">
-                <Icon name="chevronRight" size={12} />
-              </span>
-            </button>
-          </div>
+                <span className="setting__main">
+                  <span className="setting__title">恢复示例数据</span>
+                  <span className="setting__sub" style={{ display: 'block' }}>
+                    回到初次打开时的样子，用于演示
+                  </span>
+                </span>
+                <span className="setting__value">
+                  <Icon name="chevronRight" size={12} />
+                </span>
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel" style={{ marginTop: 14 }}>

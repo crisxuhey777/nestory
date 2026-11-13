@@ -72,7 +72,7 @@ async function fileToAvatar(file: File): Promise<string> {
 }
 
 export default function ProfilePage() {
-  const { state, dispatch, toast, user, signOut } = useStore()
+  const { state, dispatch, toast } = useStore()
   const [share, setShare] = useState(false)
   const [privacy, setPrivacy] = useState(false)
   const [babyOpen, setBabyOpen] = useState(false)
@@ -85,6 +85,9 @@ export default function ProfilePage() {
   const now = Date.now()
   const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
   const age = hasBirth ? ageBetween(new Date(fromISODate(state.baby.birthday, 6, 20)), new Date(now)) : null
+  const viewerMember = state.family.find((m) => m.id === state.viewerId)
+  const canManage = viewerMember?.permission === 'admin'
+
   const babyFacts = [
     state.baby.gender === 'girl' ? '女孩' : state.baby.gender === 'boy' ? '男孩' : '',
     state.baby.birthplace,
@@ -152,6 +155,10 @@ export default function ProfilePage() {
 
   const changePermission = (next: FamilyMember['permission']) => {
     if (!member || member.permission === next) return
+    if (!canManage) {
+      setPermError('只有家庭管理员可以修改成员权限')
+      return
+    }
     const admins = state.family.filter((m) => m.permission === 'admin')
     if (member.permission === 'admin' && next !== 'admin' && admins.length <= 1) {
       setPermError('至少要保留一位家庭管理员')
@@ -265,35 +272,14 @@ export default function ProfilePage() {
                 </button>
               </div>
               <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-                点头像可调整权限 · 长辈可以设为只读，看得见，也不必担心误改。
+                {canManage
+                  ? '点头像可调整权限 · 长辈可以设为只读，看得见，也不必担心误改。'
+                  : '只有家庭管理员可以调整成员权限。'}
               </p>
             </>
           ) : (
             <div className="empty">还没有家庭成员，邀请家人一起记录吧</div>
           )}
-        </section>
-
-        <section className="panel" style={{ marginTop: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span className="eyebrow">账号</span>
-            <button className="section-head__action" onClick={signOut}>
-              退出登录
-            </button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
-            <span className="setting__icon">
-              <Icon name="profile" size={18} />
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <div className="switch-row__title">{user.nickname}</div>
-              <div className="switch-row__sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {user.email}
-              </div>
-            </div>
-          </div>
-          <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-            记录会自动保存到这台电脑的 MySQL；退出后需要重新登录才能查看。
-          </p>
         </section>
 
         <section className="panel" style={{ marginTop: 14 }}>
@@ -483,18 +469,28 @@ export default function ProfilePage() {
         open={member !== null}
         onClose={() => { setMember(null); setPermError('') }}
         title={member ? member.name : '家庭成员'}
-        desc="管理员可以调整每位家人的权限，其他成员只能查看。"
+        desc={canManage ? '管理员可以调整每位家人的权限，其他成员只能查看。' : '只有家庭管理员可以调整成员权限。'}
         footer={
           member ? (
-            <button
-              className="btn btn--danger btn--full"
-              onClick={() => {
-                setRemoving(member)
-                setMember(null)
-              }}
-            >
-              移出家庭
-            </button>
+            member.id === state.viewerId ? (
+              <p className="timer__hint" style={{ textAlign: 'center', margin: 0 }}>
+                这是当前登录的账号，不能移出自己。
+              </p>
+            ) : canManage ? (
+              <button
+                className="btn btn--danger btn--full"
+                onClick={() => {
+                  setRemoving(member)
+                  setMember(null)
+                }}
+              >
+                移出家庭
+              </button>
+            ) : (
+              <p className="timer__hint" style={{ textAlign: 'center', margin: 0 }}>
+                只有家庭管理员可以移出成员。
+              </p>
+            )
           ) : null
         }
       >
@@ -510,36 +506,42 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            <div className="perm-block">
-              <div className="eyebrow" style={{ marginBottom: 8 }}>
-                权限 · 仅家庭管理员可修改
+            {canManage ? (
+              <div className="perm-block">
+                <div className="eyebrow" style={{ marginBottom: 8 }}>
+                  权限 · 仅家庭管理员可修改
+                </div>
+                <div className="perm-list">
+                  {PERMISSION_OPTIONS.map((option) => {
+                    const on = member.permission === option.value
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`perm${on ? ' perm--on' : ''}`}
+                        onClick={() => changePermission(option.value)}
+                        aria-pressed={on}
+                      >
+                        <span className="perm__mark">{on ? <Icon name="check" size={11} /> : null}</span>
+                        <span className="perm__text">
+                          <span className="perm__label">{option.label}</span>
+                          <span className="perm__desc">{option.desc}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {permError ? (
+                  <p className="perm-error" role="status">
+                    {permError}
+                  </p>
+                ) : null}
               </div>
-              <div className="perm-list">
-                {PERMISSION_OPTIONS.map((option) => {
-                  const on = member.permission === option.value
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`perm${on ? ' perm--on' : ''}`}
-                      onClick={() => changePermission(option.value)}
-                      aria-pressed={on}
-                    >
-                      <span className="perm__mark">{on ? <Icon name="check" size={11} /> : null}</span>
-                      <span className="perm__text">
-                        <span className="perm__label">{option.label}</span>
-                        <span className="perm__desc">{option.desc}</span>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-              {permError ? (
-                <p className="perm-error" role="status">
-                  {permError}
-                </p>
-              ) : null}
-            </div>
+            ) : (
+              <p className="timer__hint" style={{ marginTop: 18 }}>
+                你当前是「{PERMISSION_MAP[member.permission].label}」，只有家庭管理员可以调整权限。
+              </p>
+            )}
           </>
         ) : null}
         <p className="about-note" style={{ textAlign: 'left' }}>
@@ -562,6 +564,19 @@ export default function ProfilePage() {
               style={{ flex: 1 }}
               onClick={() => {
                 if (!removing) return
+                if (!canManage) {
+                  toast('只有家庭管理员可以移出成员')
+                  return
+                }
+                if (removing.id === state.viewerId) {
+                  toast('不能移出当前登录的账号')
+                  return
+                }
+                const admins = state.family.filter((m) => m.permission === 'admin')
+                if (removing.permission === 'admin' && admins.length <= 1) {
+                  toast('至少要保留一位家庭管理员')
+                  return
+                }
                 dispatch({ type: 'removeFamilyMember', id: removing.id })
                 toast(`${removing.name} 已移出家庭`)
                 setRemoving(null)

@@ -78,6 +78,7 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
   const [rightSec, setRightSec] = useState(0)
   const [side, setSide] = useState<'left' | 'right'>('left')
   const [running, setRunning] = useState(false)
+  const [breastStart, setBreastStart] = useState<number | null>(null)
   const [bottleMl, setBottleMl] = useState(FEED_DEFAULTS.bottleMl)
   const [formulaMl, setFormulaMl] = useState(FEED_DEFAULTS.formulaMl)
   const [feedTime, setFeedTime] = useState(timeHM(Date.now()))
@@ -135,7 +136,10 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
   const toggleMethod = (m: FeedKind) => {
     if (methods.includes(m)) {
       setMethods(methods.filter((x) => x !== m))
-      if (m === 'breast') setRunning(false)
+      if (m === 'breast') {
+        setRunning(false)
+        setBreastStart(null)
+      }
       return
     }
     if (!editing && m !== 'breast' && !methods.some((x) => x !== 'breast')) {
@@ -150,6 +154,7 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
     setRightSec(0)
     setSide('left')
     setRunning(false)
+    setBreastStart(null)
     setBottleMl(FEED_DEFAULTS.bottleMl)
     setFormulaMl(FEED_DEFAULTS.formulaMl)
     setFeedTime(timeHM(Date.now()))
@@ -164,7 +169,7 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
     const startedAt = editing
       ? timeToStart(feedTime, editing.startedAt)
       : breastTotal > 0
-        ? Date.now() - breastTotal * 1000
+        ? breastStart ?? Date.now() - breastTotal * 1000
         : timeToStart(feedTime)
     const record: FeedRecord = {
       id: editing?.id ?? uid('f'),
@@ -188,9 +193,15 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const toggleRunning = () => {
+    if (!running && breastStart == null) setBreastStart(Date.now())
+    setRunning((value) => !value)
+  }
+
   const startEdit = (r: FeedRecord) => {
     setEditing(r)
     setRunning(false)
+    setBreastStart(r.startedAt)
     setLeftSec(r.leftSec)
     setRightSec(r.rightSec)
     const ms: FeedKind[] = []
@@ -343,7 +354,7 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
                 <div className="timer__actions">
                   <button
                     className={`btn ${running ? 'btn--quiet' : 'btn--primary'}`}
-                    onClick={() => setRunning((r) => !r)}
+                    onClick={toggleRunning}
                   >
                     <Icon name={running ? 'pause' : 'play'} size={15} />
                     {running ? '暂停计时' : hasBreast ? '继续计时' : '开始计时'}

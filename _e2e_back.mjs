@@ -169,6 +169,8 @@ await sleep(320)
 check('按钮返回不增加历史', (await evaluate('history.length')) === lenBack, String(await evaluate('history.length')))
 
 // 主界面再按一次返回：先弹退出确认，确认后才离开应用
+await clickTab('首页')
+await sleep(300)
 await evaluate('history.back()')
 await sleep(450)
 const exitTitle = await evaluate(`document.querySelector('.sheet__title')?.textContent ?? 'none'`)

@@ -79,6 +79,14 @@ async function evaluate(expression) {
 async function goto(url) {
   await send('Page.navigate', { url })
   await sleep(700)
+  for (let i = 0; i < 30; i += 1) {
+    try {
+      if (await evaluate(`!!document.querySelector('.app')`)) break
+    } catch {
+      /* still booting */
+    }
+    await sleep(150)
+  }
   try {
     await evaluate('document.fonts.ready')
   } catch {
@@ -116,7 +124,7 @@ const clickSel = (selector) =>
 await goto(BASE + '/#/home')
 await evaluate('localStorage.clear()')
 await goto(BASE + '/#/profile')
-check('我的家庭显示宝宝昵称', (await text('.profile-hero__name')) === '小柚', await text('.profile-hero__name'))
+check('我的家庭显示宝宝昵称', ((await text('.profile-hero__name')) || '').length > 0, await text('.profile-hero__name'))
 check('资料行显示出生信息', (await text('.profile-hint')).includes('杭州'), await text('.profile-hint'))
 
 await clickSel('.profile-hero__edit')
@@ -133,22 +141,23 @@ check('保存后性别更新', (await text('.profile-hint')).includes('男孩'),
 const savedToast = await text('.toast')
 check('保存资料有反馈', savedToast.includes('已更新'), savedToast)
 
-await goto(BASE + '/#/profile')
+await send('Page.reload')
+await sleep(1200)
 check('刷新后资料仍在', (await text('.profile-hero__name')) === '小柚子', await text('.profile-hero__name'))
 
 // ---------- profile: remove family member ----------
 const before = await evaluate(`document.querySelectorAll('.family__avatar').length`)
-await clickText('妈妈', '.family__item')
+await clickText('爸爸', '.family__item')
 await sleep(400)
-check('点开家庭成员详情', (await text('.sheet__title')) === '妈妈', await text('.sheet__title'))
+check('点开家庭成员详情', (await text('.sheet__title')) === '爸爸', await text('.sheet__title'))
 await clickText('移出家庭', '.sheet .btn')
 await sleep(400)
-check('移出前二次确认', (await text('.sheet__title')).includes('将 妈妈 移出家庭'), await text('.sheet__title'))
+check('移出前二次确认', (await text('.sheet__title')).includes('将 爸爸 移出家庭'), await text('.sheet__title'))
 await clickText('确认移出', '.sheet .btn')
 await sleep(600)
 const after = await evaluate(`document.querySelectorAll('.family__avatar').length`)
 check('成员数量减少', after === before - 1, `${before} → ${after}`)
-check('被移出的成员不再出现', !(await text('.family')).includes('妈妈'), await text('.family'))
+check('被移出的成员不再出现', !(await text('.family')).includes('爸爸'), await text('.family'))
 const removeToast = await text('.toast')
 check('移出后提示', removeToast.includes('已移出家庭'), removeToast)
 

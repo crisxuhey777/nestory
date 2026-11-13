@@ -66,12 +66,15 @@ export function navigate(route: Route, from?: Route, replace = false) {
 
   trail = trail.slice(0, depth + 1)
   if (replace) {
-    history.replaceState(history.state, '', next)
+    const nextState = { ...(history.state ?? {}) } as Record<string, unknown>
+    if (nextState.nestoryExitGuard) nextState.nestoryExitGuardPath = next
+    history.replaceState(nextState, '', next)
     trail[depth] = route
   } else {
     // 新页面不继承退出确认哨兵，哨兵只留在被压在下面的根层条目上
     const nextState = { ...(history.state ?? {}) } as Record<string, unknown>
     delete nextState.nestoryExitGuard
+    delete nextState.nestoryExitGuardPath
     history.pushState(nextState, '', next)
     trail.push(route)
     depth += 1
@@ -89,17 +92,27 @@ export function goBack(route: Route, from?: Route) {
   const next = `#/${route}${from ? `?from=${from}` : ''}`
   if (window.location.hash === next) return
 
+  const replaceToParent = () => {
+    trail = trail.slice(0, depth + 1)
+    trail[depth] = route
+    history.replaceState(history.state, '', next)
+    pendingMode = 'back'
+    emit()
+  }
+
   if (trail[depth - 1] === route) {
+    const before = window.location.hash
     pendingMode = 'back'
     history.back()
+    // 有些入口（刷新、直接打开二级页）会留下同 URL 的历史条目，
+    // 此时 back() 不会改变 hash；短暂等待后改为替换到上一级。
+    window.setTimeout(() => {
+      if (window.location.hash === before) replaceToParent()
+    }, 160)
     return
   }
 
-  trail = trail.slice(0, depth + 1)
-  trail[depth] = route
-  history.replaceState(history.state, '', next)
-  pendingMode = 'back'
-  emit()
+  replaceToParent()
 }
 
 /** 读取 `#/xxx?from=yyy` 里的来源，用于决定二级页的返回目标。 */

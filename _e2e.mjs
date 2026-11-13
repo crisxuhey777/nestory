@@ -170,7 +170,11 @@ await clickText('瓶喂母乳')
 await sleep(250)
 
 await clickText('开始计时')
-await sleep(2300)
+await sleep(900)
+await clickText('暂停计时')
+await sleep(1500)
+await clickText('继续计时')
+await sleep(900)
 await clickText('结束本节')
 await sleep(250)
 const digits = await text('.timer__digits')
@@ -186,6 +190,24 @@ const toast = await text('.toast')
 check('保存后出现反馈', /已保存|记录/.test(toast), toast)
 const afterHomeCount = Number((await text('.overview__cell')).split('次')[0])
 check('今日次数 +1', afterHomeCount === beforeCount + 1, `${beforeCount} → ${afterHomeCount}`)
+
+await sleep(1000)
+const savedFeed = await evaluate(`fetch('/api/state', { credentials: 'same-origin' })
+  .then((r) => r.json())
+  .then((d) => {
+    const f = [...d.state.feeds].sort((a, b) => b.startedAt - a.startedAt)[0]
+    return { elapsed: Date.now() - f.startedAt, breast: f.leftSec + f.rightSec }
+  })`)
+check(
+  '暂停后开始时间仍取首次开始',
+  savedFeed.elapsed > 2800 && savedFeed.elapsed < 7000,
+  JSON.stringify(savedFeed),
+)
+check(
+  '暂停时长不计入亲喂',
+  savedFeed.breast >= 1 && savedFeed.breast <= 3,
+  JSON.stringify(savedFeed),
+)
 
 await goto(BASE + '/#/feed')
 const afterCount = feedCount(await text('.feed-today__title'))

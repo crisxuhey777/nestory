@@ -116,12 +116,11 @@ try {
   await evaluate(`[...document.querySelectorAll('.tabbar button')].find((b) => b.textContent.includes('我的'))?.click()`)
   await sleep(800)
   await waitFor('!!document.querySelector(".profile-hero")')
-  const account = await evaluate(`[...document.querySelectorAll('.switch-row__sub')].map((el) => el.textContent).join('|')`)
-  check('账号面板显示邮箱', account.includes(email), account)
-  if (!account.includes(email)) {
-    console.log('DBG hash', await evaluate('location.href'))
-    console.log('DBG body', (await evaluate('document.body.innerText')).slice(0, 300))
-  }
+  await evaluate(`[...document.querySelectorAll('.settings button')].find((b) => b.textContent.includes('通用设置'))?.click()`)
+  await waitFor('!!document.querySelector(".screen-head__title") && document.querySelector(".screen-head__title").textContent.includes("设置")')
+  await sleep(400)
+  const bodyText = await evaluate('document.body.innerText')
+  check('账号板块在通用设置里显示邮箱', bodyText.includes(email), bodyText.slice(0, 160))
 
   await evaluate(`[...document.querySelectorAll('.section-head__action')].find(b => b.textContent.trim() === '退出登录')?.click()`)
   const signedOut = await waitFor('!!document.querySelector(".auth")', 15000)

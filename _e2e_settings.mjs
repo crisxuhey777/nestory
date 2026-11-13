@@ -74,6 +74,14 @@ async function evaluate(expression) {
 async function goto(url) {
   await send('Page.navigate', { url })
   await sleep(700)
+  for (let i = 0; i < 30; i += 1) {
+    try {
+      if (await evaluate(`!!document.querySelector('.app')`)) break
+    } catch {
+      /* still booting */
+    }
+    await sleep(150)
+  }
   try {
     await evaluate('document.fonts.ready')
   } catch {
@@ -129,8 +137,8 @@ await goto(BASE + '/#/settings')
 check('刷新后字体大小保留', (await evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--type-scale').trim()`)) === '1.08', '')
 check('刷新后减少动效保留', (await evaluate(`document.documentElement.dataset.reduceMotion`)) === 'true', '')
 
-await back()
-await sleep(400)
+const backClicked = await back()
+await sleep(500)
 check('设置页返回我的家庭', (await evaluate('location.hash')) === '#/profile', await evaluate('location.hash'))
 
 // ---------- member permissions ----------
@@ -150,6 +158,7 @@ check('刷新后权限保留', (await text('.perm--on')).includes('只读'), awa
 
 await clickText('妈妈', '.family__item')
 await sleep(300)
+check('当前账号不显示移出自己', !(await text('.sheet__foot')).includes('移出家庭'), await text('.sheet__foot'))
 await clickText('只读', '.perm')
 await sleep(350)
 check(

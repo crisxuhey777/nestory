@@ -6,6 +6,7 @@ export type User = {
   nickname: string
   babyName: string
   babyBirthday: string | null
+  isDemo?: boolean
   createdAt: string | null
 }
 
@@ -145,10 +146,11 @@ export const api = {
     await request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
   },
 
-  saveState: async (state: AppState): Promise<void> => {
+  saveState: async (state: AppState, keepalive = false): Promise<void> => {
     await request<{ ok: boolean }>('/api/state', {
       method: 'PUT',
       body: JSON.stringify({ state }),
+      keepalive,
     })
   },
 

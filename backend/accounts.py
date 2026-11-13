@@ -26,7 +26,18 @@ import db
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD = 8
+MAX_PASSWORD = 200  # 上限既防超长输入，也防 PBKDF2 被当 CPU 放大器
 log = logging.getLogger("nestory.auth")
+
+_dummy_hash: str | None = None
+
+
+def _dummy() -> str:
+    """未知邮箱也做一次等价耗时的哈希校验，抹平账号枚举的时序差。"""
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = auth.hash_password("nestory-dummy-password")
+    return _dummy_hash
 
 
 def _mask_email(email: str) -> str:
@@ -113,6 +124,7 @@ def _public_user(row: dict) -> dict:
         "nickname": row["nickname"],
         "babyName": row["baby_name"],
         "babyBirthday": birthday.isoformat() if birthday else None,
+        "isDemo": row["email"] == "demo@nestory.local",
         "createdAt": row["created_at"].isoformat(timespec="seconds")
         if row.get("created_at")
         else None,
@@ -123,13 +135,16 @@ def _create_session(conn, user_id: int) -> str:
     token = auth.new_token()
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (%s, %s, %s)",
-            (auth.token_hash(token), user_id, auth.session_expiry()),
+            "INSERT INTO sessions (token_hash, user_id, expires_at) "
+            "VALUES (%s, %s, DATE_ADD(NOW(), INTERVAL %s DAY))",
+            (auth.token_hash(token), user_id, auth.SESSION_DAYS),
         )
         # 顺手清理这个用户已经过期的会话
         cur.execute(
             "DELETE FROM sessions WHERE user_id = %s AND expires_at <= NOW()", (user_id,)
         )
+        # 再全局扫一小批，避免从不登录的旧会话永久堆积
+        cur.execute("DELETE FROM sessions WHERE expires_at <= NOW() LIMIT 500")
     return token
 
 
@@ -154,25 +169,40 @@ def _load_state(conn, row: dict) -> dict:
         cur.execute("SELECT state_json FROM user_state WHERE user_id = %s", (row["id"],))
         saved = cur.fetchone()
     if saved:
+        state = None
         try:
-            state = json.loads(saved["state_json"])
-            if isinstance(state, dict) and state.get("version") == 3:
-                baby = state.get("baby") or {}
-                raw = baby.get("birthday")
-                if isinstance(raw, (int, float)):
-                    # 早期版本把生日存成了毫秒，读出来时顺手修正并落库
+            loaded = json.loads(saved["state_json"])
+        except json.JSONDecodeError as exc:
+            log.warning("state json broken user=%s: %s", row["id"], exc)
+            loaded = None
+        if isinstance(loaded, dict) and loaded.get("version") == 3:
+            state = loaded
+            baby = state.get("baby") or {}
+            raw = baby.get("birthday")
+            if isinstance(raw, (int, float)):
+                # 早期版本把生日存成了毫秒，读出来时顺手修正并落库
+                try:
                     baby["birthday"] = _ms_to_date(int(raw)).isoformat()
-                    log.info("migrated baby.birthday user=%s %s -> %s", row["id"], raw, baby["birthday"])
                     _save_state(
                         conn,
                         row["id"],
                         state,
-                        row.get("baby_name") or "宝宝",
-                        row.get("baby_birthday") or date.today(),
+                        (state.get("baby") or {}).get("name") or row.get("baby_name") or "",
+                        _day_from_state(state.get("baby") or {}) or row.get("baby_birthday"),
                     )
-                return state
-        except json.JSONDecodeError:
-            pass
+                    log.info("migrated baby.birthday user=%s %s -> %s", row["id"], raw, baby["birthday"])
+                except (ApiError, ValueError, OSError) as exc:
+                    # 生日本身坏了不能把用户锁死在 400 上，重建一份可用状态
+                    log.warning("cannot migrate birthday user=%s: %s", row["id"], exc)
+                    state = None
+        elif loaded is not None:
+            log.warning(
+                "state version mismatch user=%s: %r; rebuilding",
+                row["id"],
+                loaded.get("version") if isinstance(loaded, dict) else type(loaded).__name__,
+            )
+        if state is not None:
+            return state
 
     # 老账号或数据损坏：建一份空状态，不再注入演示数据
     birthday = row.get("baby_birthday")
@@ -213,28 +243,36 @@ def register(data: dict) -> tuple[dict, dict, str]:
         raise ApiError(400, "invalid_email", "invalid email")
     if len(password) < MIN_PASSWORD:
         raise ApiError(400, "weak_password", f"password needs at least {MIN_PASSWORD} characters")
+    if len(password) > MAX_PASSWORD:
+        raise ApiError(400, "weak_password", f"password must be at most {MAX_PASSWORD} characters")
     if len(nickname) > 60:
         raise ApiError(400, "invalid_name", "nickname is too long")
 
     state = _empty_state()
 
-    with _conn() as conn:
-        if _user_row_by_email(conn, email):
-            raise ApiError(409, "email_exists", "email already registered")
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO users (email, password_hash, nickname, baby_name, baby_birthday)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (email, auth.hash_password(password), nickname, "", None),
-            )
-            user_id = cur.lastrowid
-        _save_state(conn, user_id, state, "", None)
-        token = _create_session(conn, user_id)
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-            row = cur.fetchone()
+    try:
+        with _conn() as conn:
+            if _user_row_by_email(conn, email):
+                raise ApiError(409, "email_exists", "email already registered")
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (email, password_hash, nickname, baby_name, baby_birthday)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (email, auth.hash_password(password), nickname, "", None),
+                )
+                user_id = cur.lastrowid
+            _save_state(conn, user_id, state, "", None)
+            token = _create_session(conn, user_id)
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+                row = cur.fetchone()
+    except pymysql.err.IntegrityError as exc:
+        # 两个请求同时注册同一邮箱：唯一键会替我们裁决
+        if exc.args and exc.args[0] == 1062:
+            raise ApiError(409, "email_exists", "email already registered") from exc
+        raise
     log.info("register user=%s email=%s", user_id, _mask_email(email))
     return _public_user(row), state, token
 
@@ -245,10 +283,14 @@ def login(data: dict) -> tuple[dict, dict, str]:
     password = data.get("password") or ""
     if not email or not password:
         raise ApiError(400, "missing_fields", "请输入邮箱和密码")
+    if len(password) > MAX_PASSWORD:
+        raise ApiError(401, "bad_credentials", "邮箱或密码不正确")
 
     with _conn() as conn:
         row = _user_row_by_email(conn, email)
-        if not row or not auth.verify_password(password, row["password_hash"]):
+        # 未知邮箱也校验一次假哈希，避免用响应时间区分「账号不存在」和「密码错」
+        stored = row["password_hash"] if row else _dummy()
+        if not auth.verify_password(password, stored) or not row:
             # 不区分「邮箱不存在」和「密码错误」，避免撞库探测
             log.warning("login failed email=%s", _mask_email(email))
             raise ApiError(401, "bad_credentials", "邮箱或密码不正确")
