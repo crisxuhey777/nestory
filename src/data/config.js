@@ -21,6 +21,8 @@ export const API = {
   aiSummary: '/api/ai/summary',
   aiAnalysis: '/api/ai/analysis',
   aiStory: '/api/ai/story',
+  aiDescribe: '/api/ai/describe',
+  aiCaption: '/api/ai/caption',
 }
 
 export const STORAGE_KEYS = {
@@ -110,7 +112,7 @@ export const MEDIA_GROUPS = [
         icon: 'album',
         tone: 'default',
         title: '从相册选择照片',
-        desc: 'JPG · PNG · HEIC',
+        desc: 'JPG · PNG · HEIC · Live 短片',
         mode: 'photo',
       },
       {
@@ -146,30 +148,6 @@ export const MEDIA_GROUPS = [
         title: '录制视频',
         desc: '用相机记录一小段',
         mode: 'video',
-      },
-    ],
-  },
-  {
-    key: 'live',
-    label: 'LIVE · 会动的照片',
-    options: [
-      {
-        key: 'live-library',
-        trigger: 'liveLibrary',
-        icon: 'live',
-        tone: 'live',
-        title: '导入 Live 照片',
-        desc: '选择 Live Photo 导出的短片',
-        mode: 'live',
-      },
-      {
-        key: 'live-camera',
-        trigger: 'liveCamera',
-        icon: 'live',
-        tone: 'live',
-        title: '拍一段 Live',
-        desc: '录 3 秒，成为会动的照片',
-        mode: 'live',
       },
     ],
   },

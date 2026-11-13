@@ -1,27 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Icon } from '../brand/icons'
 import { TabHead, SectionHead } from '../components/Common'
 import { AlbumAiCard } from '../components/AiPanels'
 import { Sheet } from '../components/Sheet'
 import { useStore, uid } from '../data/store'
-import { ageBetween, fromISODate, longDate, monthDay, monthLabel } from '../lib/date'
-import { formatClipLength, inspectVideo, uploadClip, uploadPhoto, useClipURL } from '../lib/media'
+import { usePhotoInk, usePhotoInkMap } from '../lib/photoTone'
+import { ageBetween, fromISODate, longDate, monthDay, monthLabel, timeHM, toISODate } from '../lib/date'
+import { formatClipLength, inspectVideo, shrinkToDataURL, uploadClip, uploadPhoto, useClipURL } from '../lib/media'
 import { viewerName } from '../lib/viewer'
-import type { Photo } from '../data/types'
+import type { Photo, PhotoMotion } from '../data/types'
+import { hasMotion, isVideoPhoto, motionOf } from '../lib/photo'
+import { isBeforeBirth } from '../lib/birth'
 import { MEDIA_GROUPS, MEDIA_LIMITS } from '../data/config'
 import { ApiError } from '../data/api'
 
 /** Badge for a motion clip: LIVE for live photos, length for videos. */
-function KindBadge({ photo, variant }: { photo: Photo; variant?: 'cover' }) {
-  if (photo.kind === 'live') {
+async function requestCaptionTitles(src: string, hint: string): Promise<string[]> {
+  const image = await shrinkToDataURL(src, 768)
+  const res = await fetch('/api/ai/caption', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image, hint }),
+  })
+  const body = (await res.json().catch(() => ({}))) as { titles?: unknown; message?: string }
+  if (!res.ok) {
+    throw new Error(res.status >= 500 ? 'AI 暂时不可用，请稍后再试' : body.message || '这次没想出合适的标题')
+  }
+  const titles = Array.isArray(body.titles) ? body.titles.filter((t): t is string => typeof t === 'string') : []
+  if (!titles.length) throw new Error('这次没想出合适的标题')
+  return titles.slice(0, 3)
+}
+
+function KindBadge({ photo, variant }: { photo: Photo; variant?: 'cover' }) {  if (hasMotion(photo)) {
     return (
       <span className={`album-badge album-badge--live${variant === 'cover' ? ' album-badge--cover' : ''}`}>
         <span className="album-badge__dot" />
-        LIVE
+        live
       </span>
     )
   }
-  if (photo.kind === 'video') {
+  if (isVideoPhoto(photo)) {
     return (
       <span className={`album-badge${variant === 'cover' ? ' album-badge--cover' : ''}`}>
         <Icon name="play" size={9} />
@@ -32,10 +51,64 @@ function KindBadge({ photo, variant }: { photo: Photo; variant?: 'cover' }) {
   return null
 }
 
-function LightboxMedia({ photo }: { photo: Photo }) {
-  const url = useClipURL(photo.videoId, photo.video)
+function AlbumPhotoCard({ photo, onOpen }: { photo: Photo; onOpen: (photo: Photo) => void }) {
+  const imgRef = useRef<HTMLImageElement>(null)
+  const ink = usePhotoInk(imgRef)
 
-  if (photo.kind === 'video') {
+  return (
+    <button
+      className="album-card"
+      data-kind={photo.kind ?? 'photo'}
+      data-motion={hasMotion(photo) ? 'true' : 'false'}
+      data-photo-ink={ink ?? undefined}
+      onClick={() => onOpen(photo)}
+    >
+      <img ref={imgRef} src={photo.thumb} alt={photo.caption} loading="lazy" />
+      <span className="album-card__veil" />
+      <KindBadge photo={photo} />
+      <span className="album-card__cap">
+        <b>{photo.caption}</b>
+        <span>{monthDay(photo.at)}</span>
+      </span>
+    </button>
+  )
+}
+
+function AlbumMoreCard({
+  photo,
+  count,
+  onOpen,
+}: {
+  photo: Photo
+  count: number
+  onOpen: () => void
+}) {
+  const imgRef = useRef<HTMLImageElement>(null)
+  const ink = usePhotoInk(imgRef)
+
+  return (
+    <button
+      type="button"
+      className="album-card album-card--more"
+      data-photo-ink={ink ?? undefined}
+      aria-label={`查看全部照片，还有 ${count} 张`}
+      onClick={onOpen}
+    >
+      <img ref={imgRef} src={photo.thumb} alt="" aria-hidden="true" loading="lazy" />
+      <span className="album-more__veil" />
+      <span className="album-more__label">
+        <b>more</b>
+        <span>+{count} 张</span>
+      </span>
+    </button>
+  )
+}
+
+function LightboxMedia({ photo }: { photo: Photo }) {
+  const motion = motionOf(photo)
+  const url = useClipURL(motion?.videoId ?? photo.videoId, motion?.video ?? photo.video)
+
+  if (isVideoPhoto(photo)) {
     return (
       <video
         className="lightbox__clip"
@@ -47,7 +120,7 @@ function LightboxMedia({ photo }: { photo: Photo }) {
       />
     )
   }
-  if (photo.kind === 'live') {
+  if (motion) {
     return (
       <div className="lightbox__live">
         <video
@@ -59,7 +132,7 @@ function LightboxMedia({ photo }: { photo: Photo }) {
           loop
           playsInline
         />
-        <span className="lightbox__live-tag">LIVE</span>
+        <span className="lightbox__live-tag">live</span>
       </div>
     )
   }
@@ -68,29 +141,72 @@ function LightboxMedia({ photo }: { photo: Photo }) {
 
 type PickMode = 'photo' | 'live' | 'video'
 
+type AlbumDraft = {
+  src: string
+  thumb: string
+  kind: 'photo' | 'video'
+  motion?: PhotoMotion
+  video?: string
+  durationSec?: number
+  atDate: string
+  atTime: string
+  caption: string
+}
+
 export default function AlbumPage() {
   const { state, dispatch, toast } = useStore()
   const viewer = viewerName(state)
   const [filter, setFilter] = useState<'all' | string>('all')
+  const [lightboxList, setLightboxList] = useState<Photo[]>([])
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [addOpen, setAddOpen] = useState(false)
+  const [allOpen, setAllOpen] = useState(false)
+  const [draft, setDraft] = useState<AlbumDraft | null>(null)
+  const [captionEdit, setCaptionEdit] = useState<{ id: string; value: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiTitles, setAiTitles] = useState<string[]>([])
+  const aiSeq = useRef(0)
+  const [scale, setScale] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [ratio, setRatio] = useState(1)
+  const [bare, setBare] = useState(false)
+  const [slideDir, setSlideDir] = useState<'next' | 'prev'>('next')
+  const [gesturing, setGesturing] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const gesture = useRef<{
+    x: number
+    y: number
+    at: number
+    moved: boolean
+    offsetX: number
+    offsetY: number
+    scale: number
+    onVideo: boolean
+    captured: boolean
+  } | null>(null)
+  const pinch = useRef<{
+    dist: number
+    midX: number
+    midY: number
+    scale: number
+    offsetX: number
+    offsetY: number
+  } | null>(null)
+  const tapTimer = useRef<number | null>(null)
+  const lastTap = useRef(0)
 
   const photoRef = useRef<HTMLInputElement>(null)
   const photoCamRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLInputElement>(null)
-
   const videoCamRef = useRef<HTMLInputElement>(null)
-  const liveRef = useRef<HTMLInputElement>(null)
-  const liveCamRef = useRef<HTMLInputElement>(null)
 
   const mediaRefs = {
     photoLibrary: photoRef,
     photoCamera: photoCamRef,
     videoLibrary: videoRef,
     videoCamera: videoCamRef,
-    liveLibrary: liveRef,
-    liveCamera: liveCamRef,
   }
 
   const photos = [...state.photos].sort((a, b) => b.at - a.at)
@@ -111,22 +227,218 @@ export default function AlbumPage() {
     return `${d.getFullYear()}-${d.getMonth() + 1}` === filter
   })
 
-  const lightbox = lightboxIndex === null ? null : visible[lightboxIndex] ?? null
-  const touchStart = useRef<{ x: number; y: number } | null>(null)
-  const swiped = useRef(false)
-  const swipedAt = useRef(0)
+  const lightbox = lightboxIndex === null ? null : lightboxList[lightboxIndex] ?? null
+  const lightboxStill = lightbox ? !isVideoPhoto(lightbox) && !hasMotion(lightbox) : false
+  const lightboxToneOK = lightbox ? !isVideoPhoto(lightbox) : false
+  const coverImgRef = useRef<HTMLImageElement>(null)
+  const coverInk = usePhotoInk(coverImgRef, photos[0]?.id)
+  const lightboxImgRef = useRef<HTMLImageElement>(null)
+  const lightboxInk = usePhotoInk(lightboxImgRef, lightbox?.id)
+  const lightboxTones = usePhotoInkMap(
+    photos.map((photo) => ({ id: photo.id, src: photo.src })),
+    lightboxIndex !== null,
+  )
+  const lightboxTone =
+    lightboxInk ??
+    (lightbox ? lightboxTones[lightbox.id] : null) ??
+    (photos[0]?.id === lightbox?.id ? coverInk : null)
+
+  const clampOffset = (x: number, y: number, nextScale: number) => {
+    const stage = stageRef.current
+    if (!stage) return { x, y }
+    const W = stage.clientWidth
+    const H = stage.clientHeight
+    let baseW = W
+    let baseH = W / ratio
+    if (baseH > H) {
+      baseH = H
+      baseW = H * ratio
+    }
+    const maxX = Math.max(0, (baseW * nextScale - W) / 2)
+    const maxY = Math.max(0, (baseH * nextScale - H) / 2)
+    return {
+      x: Math.min(maxX, Math.max(-maxX, x)),
+      y: Math.min(maxY, Math.max(-maxY, y)),
+    }
+  }
+
+  const toggleZoom = () => {
+    if (scale > 1) {
+      setScale(1)
+      setOffset({ x: 0, y: 0 })
+      return
+    }
+    setScale(2)
+    setOffset(clampOffset(0, 0, 2))
+  }
+
+  const onStagePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+
+    const onVideo = !!(event.target as HTMLElement).closest('video')
+    const captured = !onVideo
+    if (captured) event.currentTarget.setPointerCapture(event.pointerId)
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+    if (pointers.current.size === 1) {
+      gesture.current = {
+        x: event.clientX,
+        y: event.clientY,
+        at: Date.now(),
+        moved: false,
+        offsetX: offset.x,
+        offsetY: offset.y,
+        scale,
+        onVideo,
+        captured,
+      }
+      setGesturing(true)
+      return
+    }
+
+    if (pointers.current.size === 2) {
+      if (!lightboxStill) {
+        gesture.current = null
+        pinch.current = null
+        return
+      }
+      const [a, b] = [...pointers.current.values()]
+      pinch.current = {
+        dist: Math.hypot(b.x - a.x, b.y - a.y),
+        midX: (a.x + b.x) / 2,
+        midY: (a.y + b.y) / 2,
+        scale,
+        offsetX: offset.x,
+        offsetY: offset.y,
+      }
+      gesture.current = null
+      if (tapTimer.current !== null) {
+        window.clearTimeout(tapTimer.current)
+        tapTimer.current = null
+      }
+    }
+  }
+
+  const onStagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointers.current.has(event.pointerId)) return
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+    if (pointers.current.size === 2 && pinch.current) {
+      const [a, b] = [...pointers.current.values()]
+      const dist = Math.hypot(b.x - a.x, b.y - a.y)
+      const midX = (a.x + b.x) / 2
+      const midY = (a.y + b.y) / 2
+      const nextScale = Math.min(4, Math.max(1, (pinch.current.scale * dist) / Math.max(1, pinch.current.dist)))
+      setScale(nextScale)
+      setOffset(
+        clampOffset(
+          pinch.current.offsetX + (midX - pinch.current.midX),
+          pinch.current.offsetY + (midY - pinch.current.midY),
+          nextScale,
+        ),
+      )
+      return
+    }
+
+    const start = gesture.current
+    if (!start || pointers.current.size !== 1) return
+    const dx = event.clientX - start.x
+    const dy = event.clientY - start.y
+    if (Math.abs(dx) + Math.abs(dy) > 6) start.moved = true
+    if (start.scale > 1) {
+      setOffset(clampOffset(start.offsetX + dx, start.offsetY + dy, start.scale))
+    }
+  }
+
+  const onStagePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointers.current.has(event.pointerId)) return
+    pointers.current.delete(event.pointerId)
+    const start = gesture.current
+    if (start?.captured) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch {
+        /* pointer already released */
+      }
+    }
+    if (pointers.current.size > 0) return
+
+    setGesturing(false)
+
+    if (pinch.current) {
+      pinch.current = null
+      if (scale < 1.03) {
+        setScale(1)
+        setOffset({ x: 0, y: 0 })
+      }
+      return
+    }
+
+    if (!start) return
+    gesture.current = null
+    const dx = event.clientX - start.x
+    const dy = event.clientY - start.y
+    if (Math.abs(dx) > 44 && Math.abs(dx) > Math.abs(dy) * 1.2 && scale <= 1.01) {
+      stepLightbox(dx < 0 ? 1 : -1)
+      return
+    }
+
+    if (start.onVideo) return
+
+    if (start.moved || Date.now() - start.at > 320) return
+
+    const now = Date.now()
+    if (now - lastTap.current < 350) {
+      lastTap.current = 0
+      if (tapTimer.current !== null) {
+        window.clearTimeout(tapTimer.current)
+        tapTimer.current = null
+      }
+      toggleZoom()
+      return
+    }
+
+    lastTap.current = now
+    tapTimer.current = window.setTimeout(() => {
+      setBare((current) => !current)
+      lastTap.current = 0
+      tapTimer.current = null
+    }, 300)
+  }
+
+  const onStagePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    pointers.current.delete(event.pointerId)
+    if (pointers.current.size === 0) {
+      gesture.current = null
+      pinch.current = null
+      setGesturing(false)
+    }
+  }
+
+  useEffect(() => {
+    setScale(1)
+    setOffset({ x: 0, y: 0 })
+    setRatio(1)
+  }, [lightbox?.id])
 
   const stepLightbox = (delta: number) => {
-    if (visible.length < 2) return
+    if (lightboxList.length < 2) return
+    setSlideDir(delta > 0 ? 'next' : 'prev')
     setLightboxIndex((current) => {
       if (current === null) return current
-      return (current + delta + visible.length) % visible.length
+      return Math.max(0, Math.min(lightboxList.length - 1, current + delta))
     })
   }
 
   const openLightbox = (photo: Photo) => {
     const index = visible.findIndex((p) => p.id === photo.id)
+    setLightboxList(visible)
     setLightboxIndex(index >= 0 ? index : 0)
+  }
+
+  const openCover = (photo: Photo) => {
+    setLightboxList([photo])
+    setLightboxIndex(0)
   }
 
   useEffect(() => {
@@ -135,6 +447,7 @@ export default function AlbumPage() {
     document.body.style.overflow = 'hidden'
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setLightboxIndex(null)
+      if (scale > 1) return
       if (event.key === 'ArrowLeft') stepLightbox(-1)
       if (event.key === 'ArrowRight') stepLightbox(1)
     }
@@ -143,7 +456,53 @@ export default function AlbumPage() {
       document.body.style.overflow = prev
       window.removeEventListener('keydown', onKey)
     }
-  }, [lightboxIndex, visible.length])
+  }, [lightboxIndex, lightboxList.length, scale])
+
+  useEffect(() => {
+    if (!allOpen) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onPop = () => {
+      setLightboxIndex(null)
+      setAllOpen(false)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('popstate', onPop)
+    }
+  }, [allOpen])
+
+  const openFullGallery = () => {
+    setAllOpen(true)
+    const nextState = { ...((history.state ?? {}) as Record<string, unknown>) }
+    history.pushState({ ...nextState, nestoryAlbumAll: true }, '', window.location.hash)
+  }
+
+  const closeFullGallery = () => {
+    if ((history.state as Record<string, unknown> | null)?.nestoryAlbumAll) history.back()
+    else setAllOpen(false)
+  }
+
+  const photoCard = (p: Photo) => (
+    <AlbumPhotoCard key={p.id} photo={p} onOpen={openLightbox} />
+  )
+
+  const previewGrid = (items: Photo[]) => {
+    const shown = items.length > 4 ? items.slice(0, 3) : items
+    return (
+      <div className="album-grid album-grid--rest album-grid--preview">
+        {shown.map(photoCard)}
+        {items.length > 4 ? (
+          <AlbumMoreCard
+            photo={items[3]}
+            count={items.length - 3}
+            onOpen={openFullGallery}
+          />
+        ) : null}
+      </div>
+    )
+  }
 
   const groups = useMemo(() => {
     const out: { key: string; label: string; monthIndex: number; items: Photo[] }[] = []
@@ -156,32 +515,31 @@ export default function AlbumPage() {
         out.push({
           key,
           label: monthLabel(p.at),
-          monthIndex: ageBetween(new Date(fromISODate(state.baby.birthday)), d).months + 1,
+          monthIndex: Math.max(1, ageBetween(new Date(fromISODate(state.baby.birthday)), d).months + 1),
           items: [p],
         })
     }
     return out
   }, [visible, state.baby.birthday])
 
-  const onPick = async (file: File | undefined, mode: PickMode, input: HTMLInputElement) => {
+  const onPick = async (file: File | undefined, picked: PickMode, input: HTMLInputElement) => {
     if (!file || busy) return
+    const isClip = file.type.startsWith('video/') || /\.(mov|mp4|m4v)$/i.test(file.name)
+    const mode: PickMode = picked === 'photo' && isClip ? 'live' : picked
     setBusy(true)
     try {
+      const now = Date.now()
+      resetAi()
       if (mode === 'photo') {
         const { url, thumb } = await uploadPhoto(file)
-        dispatch({
-          type: 'addPhoto',
-          photo: {
-            id: uid('ph'),
-            src: url,
-            thumb,
-            at: Date.now(),
-            caption: '今天的模样',
-            author: viewer,
-            kind: 'photo',
-          },
+        setDraft({
+          src: url,
+          thumb,
+          kind: 'photo',
+          atDate: toISODate(now),
+          atTime: timeHM(now),
+          caption: '',
         })
-        toast('照片已加入相册')
       } else {
         if (file.size > MEDIA_LIMITS.videoMaxMB * 1024 * 1024) {
           toast(`这段视频超过 ${MEDIA_LIMITS.videoMaxMB} MB，换一段短一些的`)
@@ -189,23 +547,18 @@ export default function AlbumPage() {
         }
         const info = await inspectVideo(file)
         const { url, poster } = await uploadClip(file, info, mode)
-        dispatch({
-          type: 'addPhoto',
-          photo: {
-            id: uid('ph'),
-            src: poster,
-            thumb: poster,
-            at: Date.now(),
-            caption: mode === 'live' ? '会动的瞬间' : '一段小视频',
-            author: viewer,
-            kind: mode,
-            video: url,
-            durationSec: info.durationSec,
-          },
+        setDraft({
+          src: poster,
+          thumb: poster,
+          kind: mode === 'live' ? 'photo' : 'video',
+          motion: mode === 'live' ? { video: url, durationSec: info.durationSec } : undefined,
+          video: mode === 'live' ? undefined : url,
+          durationSec: mode === 'live' ? undefined : info.durationSec,
+          atDate: toISODate(now),
+          atTime: timeHM(now),
+          caption: '',
         })
-        toast(mode === 'live' ? 'Live 照片已加入相册' : '视频已加入相册')
       }
-      setFilter('all')
       setAddOpen(false)
     } catch (error) {
       toast(error instanceof ApiError ? error.message : '这个文件暂时无法读取')
@@ -215,15 +568,90 @@ export default function AlbumPage() {
     }
   }
 
+  const saveDraft = () => {
+    if (!draft) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.atDate) || !/^\d{2}:\d{2}$/.test(draft.atTime)) {
+      toast('请选择有效的日期和时间')
+      return
+    }
+    const [hh, mm] = draft.atTime.split(':').map(Number)
+    if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh > 23 || mm > 59) {
+      toast('请选择有效的时间')
+      return
+    }
+    const at = fromISODate(draft.atDate, hh, mm)
+    if (!Number.isFinite(at)) {
+      toast('请选择有效的时间')
+      return
+    }
+    if (at > Date.now() + 60_000) {
+      toast('时间不能晚于现在')
+      return
+    }
+    if (isBeforeBirth(at, state.baby)) {
+      toast('照片不能早于宝宝的生日')
+      return
+    }
+    const fallback = monthDay(at)
+    const caption = draft.caption.trim() || fallback
+    dispatch({
+      type: 'addPhoto',
+      photo: {
+        id: uid('ph'),
+        src: draft.src,
+        thumb: draft.thumb,
+        at,
+        caption,
+        author: viewer,
+        kind: draft.kind,
+        motion: draft.motion,
+        video: draft.video,
+        durationSec: draft.durationSec,
+      },
+    })
+    setDraft(null)
+    resetAi()
+    setFilter('all')
+    toast(draft.kind === 'video' ? '视频已加入相册' : draft.motion ? '会动的照片已加入相册' : '照片已加入相册')
+  }
+
+  const askAi = async (src: string, hint: string) => {
+    const seq = ++aiSeq.current
+    setAiBusy(true)
+    setAiTitles([])
+    try {
+      const titles = await requestCaptionTitles(src, hint)
+      if (seq === aiSeq.current) setAiTitles(titles)
+    } catch (err) {
+      if (seq === aiSeq.current) {
+        const message = err instanceof Error ? err.message : '这次没想出合适的标题'
+        toast(message.includes('fetch') ? 'AI 暂时连不上，先手动写一句吧' : message)
+      }
+    } finally {
+      if (seq === aiSeq.current) setAiBusy(false)
+    }
+  }
+
+  const resetAi = () => {
+    aiSeq.current += 1
+    setAiBusy(false)
+    setAiTitles([])
+  }
+
+  const saveCaption = () => {
+    if (!captionEdit) return
+    const photo = state.photos.find((p) => p.id === captionEdit.id)
+    if (!photo) return
+    const caption = captionEdit.value.trim() || monthDay(photo.at)
+    dispatch({ type: 'updatePhoto', id: photo.id, patch: { caption } })
+    setCaptionEdit(null)
+    resetAi()
+    toast('标题已更新')
+  }
+
   const milestones = [...state.milestones].sort((a, b) => b.at - a.at)
-  const cover = visible[0] ?? null
-  const scope = months.find((m) => m.key === filter)
-  const restGroups = groups
-    .map((g) => ({
-      ...g,
-      items: g.items.filter((p) => p.id !== cover?.id),
-    }))
-    .filter((g) => g.items.length > 0)
+  const cover = photos[0] ?? null
+  const scope = months.find((m) => m.key === filter)?.label
 
   return (
     <div className="page">
@@ -233,7 +661,7 @@ export default function AlbumPage() {
         meta={
           filter === 'all'
             ? `${photos.length} 个瞬间 · ${months.length} 个月`
-            : `${visible.length} 个瞬间 · ${scope?.label ?? ''}`
+            : `${visible.length} 个瞬间 · ${scope ?? ''}`
         }
         right={
           <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
@@ -244,16 +672,22 @@ export default function AlbumPage() {
 
       <div className="page__body">
         {cover ? (
-          <button className="album-cover" onClick={() => openLightbox(cover)}>
-            <img src={cover.src} alt={cover.caption} />
+          <button
+            className="album-cover"
+            data-kind={cover.kind ?? 'photo'}
+            data-motion={hasMotion(cover) ? 'true' : 'false'}
+            data-photo-ink={coverInk ?? undefined}
+            onClick={() => openCover(cover)}
+          >
+            <img ref={coverImgRef} src={cover.src} alt={cover.caption} />
             <span className="album-cover__veil" />
-            <span className="album-cover__tag">{filter === 'all' ? '最近的一张' : scope?.label}</span>
+            <span className="album-cover__tag">最近的一张</span>
             <KindBadge photo={cover} variant="cover" />
             <span className="album-cover__cap">
               <b>{cover.caption}</b>
               <span>
-                {longDate(cover.at)} · {cover.author} {cover.kind === 'video' ? '录制' : '拍摄'}
-                {cover.kind === 'live' ? ' · 会动' : ''}
+                {longDate(cover.at)} · {cover.author} {isVideoPhoto(cover) ? '录制' : '拍摄'}
+                {hasMotion(cover) ? ' · live' : ''}
               </span>
             </span>
           </button>
@@ -280,30 +714,20 @@ export default function AlbumPage() {
           <div className="empty" style={{ paddingTop: 60 }}>
             这里会慢慢装满成长的样子。
             <br />
-            点击右上角，放入第一张照片、Live 或视频。
+            点击右上角，放入第一张照片或视频。
           </div>
+        ) : filter === 'all' ? (
+          previewGrid(visible)
         ) : (
-          restGroups.map((g) => (
+          groups.map((g) => (
             <section key={g.key}>
               <div className="months">
                 <span className="months__title">{g.label}</span>
                 <span className="months__sub">
-                  第 {g.monthIndex} 个月 · {groups.find((x) => x.key === g.key)?.items.length ?? g.items.length} 张
+                  第 {g.monthIndex} 个月 · {g.items.length} 张
                 </span>
               </div>
-              <div className={`album-grid${cover && g.key === groups[0]?.key ? ' album-grid--rest' : ''}`}>
-                {g.items.map((p) => (
-                  <button key={p.id} className="album-card" onClick={() => openLightbox(p)}>
-                    <img src={p.thumb} alt={p.caption} loading="lazy" />
-                    <span className="album-card__veil" />
-                    <KindBadge photo={p} />
-                    <span className="album-card__cap">
-                      <b>{p.caption}</b>
-                      <span>{monthDay(p.at)}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {previewGrid(g.items)}
             </section>
           ))
         )}
@@ -337,10 +761,10 @@ export default function AlbumPage() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         title="添加到相册"
-        desc="照片会留在这里，Live 与视频会让某一天重新动起来。"
+        desc="照片留在这里，视频单独存放。"
         footer={
           <p className="media-note">
-            Live 照片请选择 iOS 导出的 .mov 短片，Nestory 会截取一帧作封面，查看时循环播放。视频保存在本机浏览器中。
+            Live / 会动的照片会作为一张照片保存，查看时循环播放。
           </p>
         }
       >
@@ -375,10 +799,174 @@ export default function AlbumPage() {
         </div>
       </Sheet>
 
+      <Sheet
+        open={!!draft}
+        onClose={() => {
+          setDraft(null)
+          resetAi()
+        }}
+        title="这一刻"
+        desc="给这一刻写一句话；不写就用日期当标题。"
+        footer={
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              className="btn btn--quiet"
+              style={{ flex: 1 }}
+              onClick={() => {
+                setDraft(null)
+                resetAi()
+              }}
+            >
+              取消
+            </button>
+            <button className="btn btn--primary" style={{ flex: 2 }} onClick={saveDraft}>
+              保存到相册
+            </button>
+          </div>
+        }
+      >
+        {draft ? (
+          <div className="album-draft">
+            <div className="album-draft__media">
+              <img src={draft.src} alt="" />
+              {draft.kind === 'video' ? (
+                <span className="album-badge album-badge--cover">
+                  <Icon name="play" size={9} />
+                  {formatClipLength(draft.durationSec) || '视频'}
+                </span>
+              ) : draft.motion ? (
+                <span className="album-badge album-badge--live album-badge--cover">
+                  <span className="album-badge__dot" />
+                  live
+                </span>
+              ) : null}
+            </div>
+            <div className="field">
+              <div className="album-ai__head">
+                <span className="field__label">标题 · 选填</span>
+                <button
+                  type="button"
+                  className="album-ai__ask"
+                  disabled={aiBusy}
+                  onClick={() => askAi(draft.src, `拍摄于 ${draft.atDate}`)}
+                >
+                  {aiBusy ? '正在想…' : '✦ 帮我想一句'}
+                </button>
+              </div>
+              <input
+                className="input"
+                value={draft.caption}
+                maxLength={24}
+                placeholder="例如：睡着时的小呼吸"
+                onChange={(e) => setDraft({ ...draft, caption: e.target.value })}
+              />
+              {aiTitles.length ? (
+                <div className="album-ai__chips">
+                  {aiTitles.map((title) => (
+                    <button
+                      key={title}
+                      type="button"
+                      className="album-ai__chip"
+                      onClick={() => {
+                        setDraft({ ...draft, caption: title })
+                        setAiTitles([])
+                      }}
+                    >
+                      {title}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="field-row">
+              <label className="field">
+                <span className="field__label">日期</span>
+                <input
+                  className="input"
+                  type="date"
+                  value={draft.atDate}
+                  max={toISODate(Date.now())}
+                  min={state.baby.birthday || undefined}
+                  onChange={(e) => setDraft({ ...draft, atDate: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span className="field__label">时间</span>
+                <input
+                  className="input"
+                  type="time"
+                  value={draft.atTime}
+                  onChange={(e) => setDraft({ ...draft, atTime: e.target.value })}
+                />
+              </label>
+            </div>
+            <p className="media-note">标题之后也可以随时修改。</p>
+          </div>
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={!!captionEdit}
+        onClose={() => {
+          setCaptionEdit(null)
+          resetAi()
+        }}
+        title="修改标题"
+        footer={
+          <button className="btn btn--primary btn--full" onClick={saveCaption}>
+            保存标题
+          </button>
+        }
+      >
+        {captionEdit ? (
+          <div className="field">
+            <div className="album-ai__head">
+              <span className="field__label">给这一刻写一句话</span>
+              <button
+                type="button"
+                className="album-ai__ask"
+                disabled={aiBusy}
+                onClick={() => {
+                  const photo = state.photos.find((p) => p.id === captionEdit.id)
+                  if (photo) askAi(photo.src, `拍摄于 ${monthDay(photo.at)}`)
+                }}
+              >
+                {aiBusy ? '正在想…' : '✦ 帮我想一句'}
+              </button>
+            </div>
+            <input
+              className="input"
+              value={captionEdit.value}
+              maxLength={24}
+              placeholder="留空会用日期当标题"
+              onChange={(e) => setCaptionEdit({ ...captionEdit, value: e.target.value })}
+            />
+            <span className="field__hint">留空时，标题会变成拍摄日期。</span>
+            {aiTitles.length ? (
+              <div className="album-ai__chips">
+                {aiTitles.map((title) => (
+                  <button
+                    key={title}
+                    type="button"
+                    className="album-ai__chip"
+                    onClick={() => {
+                      setCaptionEdit({ ...captionEdit, value: title })
+                      setAiTitles([])
+                    }}
+                  >
+                    {title}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Sheet>
+
       <input
         ref={photoRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*,.mov"
         className="sr-only"
         onChange={(e) => onPick(e.target.files?.[0], 'photo', e.target)}
       />
@@ -405,56 +993,75 @@ export default function AlbumPage() {
         className="sr-only"
         onChange={(e) => onPick(e.target.files?.[0], 'video', e.target)}
       />
-      <input
-        ref={liveRef}
-        type="file"
-        accept="video/*,.mov"
-        className="sr-only"
-        onChange={(e) => onPick(e.target.files?.[0], 'live', e.target)}
-      />
-      <input
-        ref={liveCamRef}
-        type="file"
-        accept="video/*"
-        capture="environment"
-        className="sr-only"
-        onChange={(e) => onPick(e.target.files?.[0], 'live', e.target)}
-      />
+
+      {allOpen ? (
+        <div className="album-all" role="dialog" aria-modal="true" aria-label="全部照片">
+          <div className="album-all__inner">
+            <header className="album-all__head">
+              <button className="icon-btn" aria-label="返回相册" onClick={closeFullGallery}>
+                <Icon name="chevronLeft" size={20} />
+              </button>
+              <div className="album-all__title">
+                <b>{filter === 'all' ? '全部照片' : `${months.find((m) => m.key === filter)?.label ?? ''}照片`}</b>
+                <span>共 {visible.length} 张 · 按时间倒序</span>
+              </div>
+              <span className="album-all__spacer" aria-hidden="true" />
+            </header>
+            <div className="album-all__body">
+              <div className="album-grid album-grid--rest album-grid--full">{visible.map(photoCard)}</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {lightbox && lightboxIndex !== null ? (
         <div
-          className="lightbox-backdrop"
-          onClick={() => {
-            if (swiped.current || Date.now() - swipedAt.current < 600) {
-              swiped.current = false
-              return
-            }
-            setLightboxIndex(null)
-          }}
+          className={`lightbox-backdrop${bare ? ' lightbox--bare' : ''}`}
+          onClick={() => setLightboxIndex(null)}
         >
           <div
-            className="lightbox"
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => {
-              if (e.pointerType !== 'touch') return
-              touchStart.current = { x: e.clientX, y: e.clientY }
-              swiped.current = false
-            }}
-            onPointerUp={(e) => {
-              if (e.pointerType !== 'touch') return
-              const start = touchStart.current
-              touchStart.current = null
-              if (!start) return
-              const dx = e.clientX - start.x
-              const dy = e.clientY - start.y
-              if (Math.abs(dx) > 44 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-                swiped.current = true
-                swipedAt.current = Date.now()
-                stepLightbox(dx < 0 ? 1 : -1)
-              }
-            }}
+            className={`lightbox${bare ? ' lightbox--bare' : ''}`}
+            onClick={(event) => event.stopPropagation()}
           >
-            {visible.length > 1 ? (
+            <div
+              ref={stageRef}
+              className="lightbox__stage"
+              onPointerDown={onStagePointerDown}
+              onPointerMove={onStagePointerMove}
+              onPointerUp={onStagePointerUp}
+              onPointerCancel={onStagePointerCancel}
+            >
+              {lightboxStill ? (
+                <div
+                  key={lightbox.id}
+                  className={`lightbox__slide lightbox__slide--${slideDir}`}
+                >
+                  <img
+                    ref={lightboxImgRef}
+                    className="lightbox__photo"
+                    src={lightbox.src}
+                    alt={lightbox.caption}
+                    draggable={false}
+                    onLoad={(event) =>
+                      setRatio(event.currentTarget.naturalWidth / Math.max(1, event.currentTarget.naturalHeight))
+                    }
+                    style={{
+                      transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})`,
+                      transition: gesturing ? 'none' : 'transform 180ms var(--ease)',
+                    }}
+                  />
+                </div>
+              ) : (
+                <div
+                  key={lightbox.id}
+                  className={`lightbox__slide lightbox__slide--${slideDir}`}
+                >
+                  <LightboxMedia photo={lightbox} />
+                </div>
+              )}
+            </div>
+
+            {lightboxList.length > 1 && scale <= 1 && !bare && lightboxIndex > 0 ? (
               <button
                 type="button"
                 className="lightbox__nav lightbox__nav--prev"
@@ -464,8 +1071,7 @@ export default function AlbumPage() {
                 <Icon name="chevronLeft" size={20} />
               </button>
             ) : null}
-            <LightboxMedia key={lightbox.id} photo={lightbox} />
-            {visible.length > 1 ? (
+            {lightboxList.length > 1 && scale <= 1 && !bare && lightboxIndex < lightboxList.length - 1 ? (
               <button
                 type="button"
                 className="lightbox__nav lightbox__nav--next"
@@ -475,18 +1081,35 @@ export default function AlbumPage() {
                 <Icon name="chevronRight" size={20} />
               </button>
             ) : null}
-            <div className="lightbox__cap">
-              <b>{lightbox.caption}</b>
+
+            <div
+              className={`lightbox__cap${lightbox.kind === 'video' ? ' lightbox__cap--video' : ''}`}
+              data-photo-ink={lightboxToneOK ? lightboxTone ?? undefined : undefined}
+            >
+              <div className="lightbox__title-row">
+                <b>{lightbox.caption}</b>
+                <button
+                  type="button"
+                  className="lightbox__edit"
+                  onClick={() => {
+                    setLightboxIndex(null)
+                    setCaptionEdit({ id: lightbox.id, value: lightbox.caption })
+                  }}
+                >
+                  改标题
+                </button>
+              </div>
               <div className="lightbox__meta">
                 <span>
                   {longDate(lightbox.at)} · {lightbox.author} {lightbox.kind === 'video' ? '录制' : '拍摄'}
                 </span>
                 <span className="lightbox__count">
-                  {lightboxIndex + 1} / {visible.length}
+                  {lightboxIndex + 1} / {lightboxList.length}
                 </span>
               </div>
             </div>
           </div>
+
           <button
             className="icon-btn icon-btn--light lightbox__close"
             aria-label="关闭"
@@ -499,3 +1122,5 @@ export default function AlbumPage() {
     </div>
   )
 }
+
+

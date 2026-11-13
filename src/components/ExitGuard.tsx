@@ -115,7 +115,7 @@ export default function ExitGuard({ route }: { route: Route }) {
         </div>
       }
     >
-      <p className="exit-note">退出后需要重新登录，记录仍保存在这台设备上。</p>
+      <p className="exit-note">退出后需要重新登录，记录不会丢失。</p>
     </Sheet>
   )
 }

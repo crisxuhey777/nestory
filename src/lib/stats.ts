@@ -133,6 +133,39 @@ export function sleepMinutesToday(sleeps: { startedAt: number; endedAt?: number 
   return total / 60000
 }
 
+export function sleepStatsSince(
+  sleeps: { startedAt: number; endedAt?: number }[],
+  since: number,
+  now = Date.now(),
+) {
+  let total = 0
+  let count = 0
+  let lastStartedAt: number | null = null
+  for (const s of sleeps) {
+    if (s.startedAt < since) continue
+    count += 1
+    lastStartedAt = lastStartedAt == null ? s.startedAt : Math.max(lastStartedAt, s.startedAt)
+    const end = s.endedAt ?? now
+    const from = Math.max(s.startedAt, since)
+    const to = Math.min(end, now)
+    if (to > from) total += to - from
+  }
+  return { minutes: total / 60000, count, lastStartedAt }
+}
+
+export function diaperCountsSince(
+  diapers: { at: number; kind: 'wet' | 'dirty' | 'both' }[],
+  since: number,
+) {
+  const recent = diapers.filter((d) => d.at >= since)
+  return {
+    wet: recent.filter((d) => d.kind === 'wet' || d.kind === 'both').length,
+    dirty: recent.filter((d) => d.kind === 'dirty' || d.kind === 'both').length,
+    total: recent.length,
+    lastAt: recent.length ? Math.max(...recent.map((d) => d.at)) : null,
+  }
+}
+
 export function diaperCountsToday(diapers: { at: number; kind: 'wet' | 'dirty' | 'both' }[], now = Date.now()) {
   const today = diapers.filter((d) => isSameDay(d.at, now))
   return {

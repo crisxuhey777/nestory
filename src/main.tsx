@@ -16,6 +16,8 @@ installTapFeedback()
 const errorWindow = window as Window & { __nestoryErrors?: string[] }
 errorWindow.__nestoryErrors = []
 const rememberError = (message: string) => {
+  // Chrome emits this harmless scheduling warning when observers resize synchronously.
+  if (message.includes('ResizeObserver loop')) return
   if (errorWindow.__nestoryErrors!.length >= 20) return
   errorWindow.__nestoryErrors!.push(message)
 }

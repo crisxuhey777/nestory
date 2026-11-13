@@ -119,6 +119,35 @@ const setValue = (selector, value) =>
 const back = () => evaluate(`(() => { const b = document.querySelector('.screen-head .icon-btn'); if (!b) return false; b.click(); return true })()`)
 const clickSel = (selector) =>
   evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.click(); return true })()`)
+const longPress = async (selector) => {
+  const point = await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`)
+  if (!point) return false
+  await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return false;
+    el.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, pointerType: 'touch', button: 0, pointerId: 7,
+      clientX: ${point.x}, clientY: ${point.y},
+    }));
+    return true;
+  })()`)
+  await sleep(650)
+  await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (el) el.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true, pointerType: 'touch', button: 0, pointerId: 7,
+      clientX: ${point.x}, clientY: ${point.y},
+    }));
+    return true;
+  })()`)
+  await sleep(320)
+  return true
+}
 
 // ---------- profile: edit baby ----------
 await goto(BASE + '/#/home')
@@ -128,8 +157,83 @@ check('我的家庭显示宝宝昵称', ((await text('.profile-hero__name')) || 
 check('资料行显示出生信息', (await text('.profile-hint')).includes('杭州'), await text('.profile-hint'))
 
 await clickSel('.profile-hero__edit')
-await sleep(400)
-check('打开宝宝资料编辑', (await text('.sheet__title')).includes('编辑宝宝资料'), await text('.sheet__title'))
+await sleep(500)
+check('打开宝宝资料二级页', (await text('.screen-head__title')).includes('宝宝资料'), await text('.screen-head__title'))
+check('宝宝资料页有返回键', await evaluate(`!!document.querySelector('.screen-head .icon-btn')`), '')
+await evaluate(`document.querySelector('.avatar-picker')?.scrollIntoView({ block: 'center' })`)
+await sleep(350)
+await send('Page.captureScreenshot', { format: 'png' }).then((shot) =>
+  writeFileSync('shots/final-avatar-picker.png', Buffer.from(shot.data, 'base64')),
+)
+
+// 未保存返回：提示保存，取消后仍留在二级页
+await setValue('.baby-form .input', '临时名字')
+await back()
+await sleep(350)
+check('未保存返回会提示保存', (await text('.sheet__title')).includes('没有保存'), await text('.sheet__title'))
+check('提示时仍停留在宝宝资料页', (await evaluate('location.hash')) === '#/baby', await evaluate('location.hash'))
+await send('Page.captureScreenshot', { format: 'png' }).then((shot) =>
+  writeFileSync('shots/final-baby-unsaved.png', Buffer.from(shot.data, 'base64')),
+)
+await clickText('不保存', '.sheet button')
+await sleep(500)
+check('不保存后资料没有生效', (await text('.profile-hero__name')) !== '临时名字', await text('.profile-hero__name'))
+
+await clickSel('.profile-hero__edit')
+await sleep(450)
+
+const avatarBefore = await evaluate(`document.querySelectorAll('.avatar-picker__slot').length`)
+check('头像选择器有默认头像', (await evaluate(`!!document.querySelector('.avatar-picker__lock')`)), String(avatarBefore))
+const removableAvatar = `.avatar-picker__slot:nth-last-child(2) .avatar-picker__item`
+const removableKey = await evaluate(`document.querySelector(${JSON.stringify(removableAvatar)})?.dataset.avatarKey || ''`)
+check('长按待移除的不是默认头像', !!removableKey && removableKey !== 'default', removableKey)
+await longPress(removableAvatar)
+const avatarAfterHold = await evaluate(`document.querySelectorAll('.avatar-picker__slot').length`)
+check('长按只显示移除键，不直接删除', avatarAfterHold === avatarBefore, `${avatarBefore} → ${avatarAfterHold}`)
+check('长按后出现移除键', (await evaluate(`!!document.querySelector('.avatar-picker__remove')`)), '')
+await send('Page.captureScreenshot', { format: 'png' }).then((shot) =>
+  writeFileSync('shots/final-avatar-remove.png', Buffer.from(shot.data, 'base64')),
+)
+await clickSel('.avatar-picker__remove')
+await sleep(350)
+const avatarAfter = await evaluate(`document.querySelectorAll('.avatar-picker__slot').length`)
+check('点移除键删除一张头像', avatarAfter === avatarBefore - 1, `${avatarBefore} → ${avatarAfter}`)
+const removeAvatarToast = await text('.toast:last-child')
+check('移除头像有提示', removeAvatarToast.includes('已移除'), removeAvatarToast)
+
+await longPress(`.avatar-picker__slot:last-child .avatar-picker__item`)
+const avatarAfterDefault = await evaluate(`document.querySelectorAll('.avatar-picker__slot').length`)
+check('默认头像不能删除', avatarAfterDefault === avatarAfter, `${avatarAfter} → ${avatarAfterDefault}`)
+const protectedToast = await text('.toast:last-child')
+check('默认头像有保护提示', protectedToast.includes('默认头像'), protectedToast)
+
+// 生日改晚触发冲突面板，但只返回修改，不改数据
+const originalBirthday = await evaluate(`document.querySelector('.baby-form input[type="date"]').value`)
+await setValue('.baby-form input[type="date"]', '2026-10-21')
+await clickText('保存资料')
+await sleep(300)
+const conflictText = await text('.birth-conflict')
+check('生日改晚弹出冲突确认', conflictText.includes('早于生日') && conflictText.includes('保留并隐藏'), conflictText.slice(0, 60))
+await send('Page.captureScreenshot', { format: 'png' }).then((shot) =>
+  writeFileSync('shots/final-birthday-conflict.png', Buffer.from(shot.data, 'base64')),
+)
+await clickText('返回修改', '.birth-conflict button')
+await sleep(200)
+check('返回修改关闭冲突面板', !(await evaluate(`!!document.querySelector('.birth-conflict')`)), '')
+
+// 系统/浏览器返回同样先提示；继续编辑后回到页面
+await setValue('.baby-form .input', '临时名字2')
+await sleep(180)
+await evaluate('history.back()')
+await sleep(450)
+check('浏览器返回也提示保存', (await text('.sheet__title')).includes('没有保存'), await text('.sheet__title'))
+check('浏览器返回后仍在资料页', (await evaluate('location.hash')) === '#/baby', await evaluate('location.hash'))
+await clickText('继续编辑', '.sheet button')
+await sleep(250)
+check('继续编辑关闭提示', !(await evaluate(`!!document.querySelector('.sheet')`)), '')
+await setValue('.baby-form .input', '小柚子')
+await sleep(100)
+await setValue('.baby-form input[type="date"]', originalBirthday)
 
 await setValue('.baby-form .input', '小柚子')
 await clickText('男孩', '.baby-form button')
@@ -138,12 +242,19 @@ await clickText('保存资料')
 await sleep(500)
 check('保存后昵称更新', (await text('.profile-hero__name')) === '小柚子', await text('.profile-hero__name'))
 check('保存后性别更新', (await text('.profile-hint')).includes('男孩'), await text('.profile-hint'))
-const savedToast = await text('.toast')
+const savedToast = await text('.toast:last-child')
 check('保存资料有反馈', savedToast.includes('已更新'), savedToast)
 
 await send('Page.reload')
 await sleep(1200)
 check('刷新后资料仍在', (await text('.profile-hero__name')) === '小柚子', await text('.profile-hero__name'))
+
+await clickSel('.profile-hero__edit')
+await sleep(450)
+const avatarAfterReload = await evaluate(`document.querySelectorAll('.avatar-picker__slot').length`)
+check('刷新后已移除的头像不再出现', avatarAfterReload === avatarAfter, `${avatarAfter} → ${avatarAfterReload}`)
+await back()
+await sleep(450)
 
 // ---------- profile: remove family member ----------
 const before = await evaluate(`document.querySelectorAll('.family__avatar').length`)
@@ -192,6 +303,7 @@ await send('Page.captureScreenshot', { format: 'png' }).then((shot) =>
 )
 
 // leave demo data untouched for the next run / screenshots
+await evaluate(`fetch('/api/state/reset', { method: 'POST', credentials: 'include' }).then((r) => r.ok)`)
 await evaluate('localStorage.clear()')
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)

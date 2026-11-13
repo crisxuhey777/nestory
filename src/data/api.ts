@@ -78,26 +78,59 @@ export function unwrapState(payload: unknown): unknown {
 export function isAppState(value: unknown): value is AppState {
   if (!value || typeof value !== 'object') return false
   const state = value as Partial<AppState>
-  return state.version === 3 && !!state.baby && Array.isArray(state.feeds) && Array.isArray(state.photos)
+  const lists = [
+    state.feeds,
+    state.sleeps,
+    state.diapers,
+    state.growths,
+    state.milestones,
+    state.photos,
+    state.family,
+    state.heroPhotoIds,
+  ]
+  return (
+    state.version === 3 &&
+    !!state.baby &&
+    typeof state.baby.name === 'string' &&
+    typeof state.baby.birthday === 'string' &&
+    (state.baby.birthday === '' || /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)) &&
+    lists.every(Array.isArray) &&
+    !!state.reminder &&
+    typeof state.reminder === 'object' &&
+    typeof state.reminder.enabled === 'boolean' &&
+    typeof state.reminder.intervalMinutes === 'number' &&
+    Number.isFinite(state.reminder.intervalMinutes) &&
+    typeof state.reminder.quietNight === 'boolean' &&
+    typeof state.reminder.vibration === 'boolean'
+  )
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const controller = new AbortController()
+  const timer = globalThis.setTimeout(() => controller.abort(), 20_000)
   let res: Response
+  let text: string
   try {
     res = await fetch(path, {
       credentials: 'same-origin',
       ...init,
+      signal: controller.signal,
       headers: {
         Accept: 'application/json',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         ...(init.headers ?? {}),
       },
     })
+    text = await res.text()
   } catch {
-    throw new ApiError(0, 'network', '连不上本地后端，先运行 python backend/server.py')
+    if (controller.signal.aborted) {
+      throw new ApiError(0, 'timeout', '请求超时，请稍后再试')
+    }
+    throw new ApiError(0, 'network', '暂时连不上 Nestory，请稍后再试')
+  } finally {
+    globalThis.clearTimeout(timer)
   }
 
-  const text = await res.text()
   let payload: unknown = null
   if (text) {
     try {
@@ -110,7 +143,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     const body = (payload ?? {}) as { error?: string; message?: string }
     if (res.status === 503) {
-      throw new ApiError(503, body.error ?? 'db_unavailable', 'MySQL 没有连上，请先启动数据库')
+      throw new ApiError(503, body.error ?? 'db_unavailable', '服务暂时不可用，请稍后再试')
     }
     throw new ApiError(res.status, body.error ?? `http_${res.status}`, body.message ?? `请求失败（HTTP ${res.status}）`)
   }
@@ -119,7 +152,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 function session(payload: { user: User; state: unknown }): Session {
-  if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '后端返回的数据不是 AppState v3')
+  if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '数据加载失败，请刷新后再试')
   return { user: payload.user, state: payload.state }
 }
 
@@ -156,7 +189,7 @@ export const api = {
 
   resetState: async (): Promise<AppState> => {
     const payload = await request<{ state: unknown }>('/api/state/reset', { method: 'POST' })
-    if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '后端返回的数据不是 AppState v3')
+    if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '数据加载失败，请刷新后再试')
     return payload.state
   },
 }

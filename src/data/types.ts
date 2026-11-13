@@ -52,6 +52,17 @@ export type Baby = {
   birthHeadCm: number
   birthplace: string
   avatar: string
+  /** Avatar sources the family removed from the picker; the default stays. */
+  avatarHidden?: string[]
+}
+
+/** A short clip that turns a still photo into a "live" photo. */
+export type PhotoMotion = {
+  /** 后端返回的静态短片地址（演示素材或对象存储 URL） */
+  video?: string
+  /** IndexedDB media id for uploaded clips (keeps localStorage small) */
+  videoId?: string
+  durationSec?: number
 }
 
 export type Photo = {
@@ -60,13 +71,19 @@ export type Photo = {
   thumb: string
   at: number
   caption: string
+  /** 视觉模型缓存的画面描述；只用于 AI 故事，不展示给用户 */
+  visualCaption?: string
+  /** 描述生成时间，便于以后判断是否过期 */
+  visualAt?: number
   author: string
-  /** photo (still), live (still + short motion clip), video (clip with poster) */
+  /** photo (still, optionally with motion), video (clip with poster); 'live' is legacy */
   kind?: 'photo' | 'live' | 'video'
-  /** 后端返回的静态短片地址（演示素材或对象存储 URL） */
+  motion?: PhotoMotion
+  /** @deprecated legacy live clip fields */
   video?: string
-  /** IndexedDB media id for uploaded clips (keeps localStorage small) */
+  /** @deprecated legacy live clip fields */
   videoId?: string
+  /** @deprecated legacy live clip fields */
   durationSec?: number
 }
 
@@ -85,6 +102,15 @@ export type FamilyMember = {
   permission: 'admin' | 'edit' | 'read'
 }
 
+export type ArchivedState = {
+  feeds: FeedRecord[]
+  sleeps: SleepRecord[]
+  diapers: DiaperRecord[]
+  growths: GrowthRecord[]
+  milestones: Milestone[]
+  photos: Photo[]
+}
+
 export type AppState = {
   version: number
   baby: Baby
@@ -94,6 +120,8 @@ export type AppState = {
   growths: GrowthRecord[]
   milestones: Milestone[]
   photos: Photo[]
+  /** 早于当前生日的旧记录：保留可恢复，但不参与任何展示、统计和 AI。 */
+  archived?: ArchivedState
   heroPhotoIds: string[]
   reminder: Reminder
   family: FamilyMember[]

@@ -131,7 +131,7 @@ export default function RemindersPage() {
         </div>
 
         <p className="about-note">
-          提醒设置只影响这台设备。家人共享的记录会同步，但各自的提醒节奏可以不同。
+          每位家人都可以设置自己的提醒节奏。
         </p>
       </div>
     </div>

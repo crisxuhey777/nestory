@@ -133,7 +133,7 @@ export default function Onboarding() {
               </li>
               <li>
                 <Icon name="shield" size={17} />
-                <span>只保存在这台设备上，随时可以清空</span>
+                <span>只有你和家人能看到，随时可以修改</span>
               </li>
             </ul>
             <div className="onboarding__actions">
@@ -218,7 +218,7 @@ export default function Onboarding() {
                       <Icon name="plus" size={24} />
                     </span>
                     <b>{busy ? '正在读取…' : '从设备选一张照片'}</b>
-                    <small>JPG / PNG，自动压缩，只保存在这台设备</small>
+                    <small>JPG / PNG，可稍后更换</small>
                   </button>
                 )}
                 <button className="onboarding__textbtn" type="button" onClick={() => setStep(2)}>

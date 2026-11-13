@@ -5,6 +5,7 @@ import type { RegisterInput, Session, User } from './api'
 import { ApiError, api, isAppState } from './api'
 import AuthScreen from '../components/AuthScreen'
 import BootScreen from '../components/Boot'
+import { normalizeBirthState } from '../lib/birth'
 
 export { isAppState }
 
@@ -17,6 +18,8 @@ type Action =
   | { type: 'addDiaper'; diaper: DiaperRecord }
   | { type: 'addGrowth'; growth: GrowthRecord }
   | { type: 'addPhoto'; photo: Photo }
+  | { type: 'updatePhoto'; id: string; patch: Partial<Photo> }
+  | { type: 'setPhotoVisuals'; visuals: { id: string; visualCaption: string; visualAt: number }[] }
   | { type: 'setHeroPhotos'; ids: string[] }
   | { type: 'updateBaby'; baby: Partial<Baby> }
   | { type: 'removeFamilyMember'; id: string }
@@ -27,7 +30,7 @@ type Action =
   | { type: 'completeOnboarding'; patch: Partial<AppState> }
   | { type: 'reset' }
 
-function reducer(state: AppState, action: Action): AppState {
+function rawReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'addFeed':
       return { ...state, feeds: [...state.feeds, action.feed] }
@@ -48,6 +51,23 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, growths: [...state.growths, action.growth] }
     case 'addPhoto':
       return { ...state, photos: [action.photo, ...state.photos] }
+    case 'updatePhoto':
+      return {
+        ...state,
+        photos: state.photos.map((p) =>
+          p.id === action.id ? { ...p, ...action.patch } : p,
+        ),
+      }
+    case 'setPhotoVisuals': {
+      const byId = new Map(action.visuals.map((v) => [v.id, v]))
+      return {
+        ...state,
+        photos: state.photos.map((p) => {
+          const v = byId.get(p.id)
+          return v ? { ...p, visualCaption: v.visualCaption, visualAt: v.visualAt } : p
+        }),
+      }
+    }
     case 'setHeroPhotos':
       return { ...state, heroPhotoIds: action.ids }
     case 'updateBaby':
@@ -73,6 +93,11 @@ function reducer(state: AppState, action: Action): AppState {
     default:
       return state
   }
+}
+
+/** 所有写入都过一遍生日下界：非法记录会进入 archived，不会出现在主数组里。 */
+function reducer(state: AppState, action: Action): AppState {
+  return normalizeBirthState(rawReducer(state, action))
 }
 
 export function uid(prefix = 'r'): string {
@@ -184,7 +209,7 @@ function ReadyStore({
   signOut: () => void
   children: ReactNode
 }) {
-  const [state, apply] = useReducer(reducer, session.state)
+  const [state, apply] = useReducer(reducer, session.state, normalizeBirthState)
   const [toasts, setToasts] = useState<Toast[]>([])
   const firstRender = useRef(true)
   const lastSaveError = useRef(0)

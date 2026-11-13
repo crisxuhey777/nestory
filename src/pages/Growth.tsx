@@ -1,13 +1,19 @@
 import { useState } from 'react'
-import { Icon } from '../brand/icons'
+import { Icon, type IconName } from '../brand/icons'
 import { TabHead, Sparkline } from '../components/Common'
 import { GrowthAiCard } from '../components/AiPanels'
 import { DiaperSheet, GrowthSheet, SleepSheet } from '../components/QuickSheets'
-import { useStore, uid } from '../data/store'
-import { DAY, ageBetween, ageLabel, fromISODate, shortDate, timeHM } from '../lib/date'
-import { diaperCountsToday, latestGrowth, previousGrowth, sleepMinutesToday } from '../lib/stats'
+import { useStore } from '../data/store'
+import { DAY, ageBetween, ageLabel, fromISODate, isSameDay, shortDate, timeHM } from '../lib/date'
+import {
+  diaperCountsSince,
+  latestGrowth,
+  previousGrowth,
+  sleepStatsSince,
+} from '../lib/stats'
 
 type Tab = 'growth' | 'sleep' | 'diaper'
+type DiaperFilter = 'all' | 'wet' | 'dirty' | 'both'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'growth', label: '生长' },
@@ -15,17 +21,26 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'diaper', label: '尿布' },
 ]
 
+const DIAPER_FILTERS: { key: DiaperFilter; label: string; icon: IconName }[] = [
+  { key: 'all', label: '全部', icon: 'all' },
+  { key: 'wet', label: '小便', icon: 'drop' },
+  { key: 'dirty', label: '大便', icon: 'diaper' },
+  { key: 'both', label: '混合', icon: 'both' },
+]
+
 export default function GrowthPage() {
-  const { state, dispatch, toast } = useStore()
+  const { state } = useStore()
   const [tab, setTab] = useState<Tab>('growth')
   const [range, setRange] = useState<30 | 90 | 0>(90)
   const [addOpen, setAddOpen] = useState(false)
+  const [diaperFilter, setDiaperFilter] = useState<DiaperFilter>('all')
   const now = Date.now()
 
   const latest = latestGrowth(state.growths)
   const prev = previousGrowth(state.growths)
-  const sleepMin = sleepMinutesToday(state.sleeps, now)
-  const diapers = diaperCountsToday(state.diapers, now)
+  const weekStart = now - 7 * DAY
+  const sleepWeek = sleepStatsSince(state.sleeps, weekStart, now)
+  const diapers = diaperCountsSince(state.diapers, weekStart)
   const ongoing = state.sleeps.find((s) => !s.endedAt)
 
   const sortedGrowth = [...state.growths].sort((a, b) => a.at - b.at)
@@ -37,11 +52,23 @@ export default function GrowthPage() {
     latest?.weightKg != null && prev?.weightKg != null ? latest.weightKg - prev.weightKg : null
 
   const todaySleeps = [...state.sleeps]
-    .filter((s) => s.startedAt >= now - 7 * DAY)
+    .filter((s) => s.startedAt >= weekStart)
     .sort((a, b) => b.startedAt - a.startedAt)
-    .slice(0, 6)
 
-  const todayDiapers = [...state.diapers].sort((a, b) => b.at - a.at).slice(0, 8)
+  const todayDiapers = [...state.diapers]
+    .filter((d) => d.at >= weekStart)
+    .sort((a, b) => b.at - a.at)
+
+  const diaperFilterCounts: Record<DiaperFilter, number> = {
+    all: todayDiapers.length,
+    wet: todayDiapers.filter((d) => d.kind === 'wet').length,
+    dirty: todayDiapers.filter((d) => d.kind === 'dirty').length,
+    both: todayDiapers.filter((d) => d.kind === 'both').length,
+  }
+  const filteredDiapers =
+    diaperFilter === 'all'
+      ? todayDiapers
+      : todayDiapers.filter((d) => d.kind === diaperFilter)
 
   const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
   const ageText = hasBirth
@@ -51,8 +78,8 @@ export default function GrowthPage() {
     tab === 'growth'
       ? `${ageText} · ${latest ? `最近测量 ${shortDate(latest.at)}` : '还没有测量记录'}`
       : tab === 'sleep'
-        ? `${ageText} · 今日睡眠 ${Math.floor(sleepMin / 60)} 小时 ${Math.round(sleepMin % 60)} 分`
-        : `${ageText} · 今日更换 ${diapers.total} 次`
+        ? `${ageText} · 近 7 天睡眠 ${Math.floor(sleepWeek.minutes / 60)} 小时 ${Math.round(sleepWeek.minutes % 60)} 分`
+        : `${ageText} · 近 7 天更换 ${diapers.total} 次`
 
   return (
     <div className="page">
@@ -196,11 +223,11 @@ export default function GrowthPage() {
           <>
             <div className="metrics">
               <div className="metric" style={{ gridColumn: 'span 2' }}>
-                <div className="metric__label">今日睡眠</div>
+                <div className="metric__label">近 7 天睡眠</div>
                 <div className="metric__value">
-                  {Math.floor(sleepMin / 60)}
+                  {Math.floor(sleepWeek.minutes / 60)}
                   <small>小时</small>
-                  {Math.round(sleepMin % 60)}
+                  {Math.round(sleepWeek.minutes % 60)}
                   <small>分</small>
                 </div>
                 <div className="metric__delta">{ongoing ? `正在睡 · 从 ${timeHM(ongoing.startedAt)} 开始` : '按实际睡眠时间累计'}</div>
@@ -208,21 +235,12 @@ export default function GrowthPage() {
               <div className="metric metric--accent">
                 <div className="metric__label">睡眠次数</div>
                 <div className="metric__value">
-                  {state.sleeps.filter((s) => s.startedAt >= now - DAY).length}
+                  {sleepWeek.count}
                   <small>次</small>
                 </div>
-                <div className="metric__delta">近 24 小时</div>
+                <div className="metric__delta">近 7 天</div>
               </div>
             </div>
-
-            <button
-              className="btn btn--primary btn--full"
-              style={{ marginTop: 14, height: 48 }}
-              onClick={() => setAddOpen(true)}
-            >
-              <Icon name={ongoing ? 'check' : 'plus'} size={17} />
-              {ongoing ? '补充结束时间' : '记录睡眠'}
-            </button>
 
             <div className="growth-list">
               <div className="divider-label" style={{ marginTop: 22 }}>
@@ -246,7 +264,12 @@ export default function GrowthPage() {
                   </div>
                 )
               })}
-              {todaySleeps.length === 0 ? <div className="empty">还没有睡眠记录</div> : null}
+              {todaySleeps.length === 0 ? (
+                <div className="empty">
+                  近 7 天还没有睡眠记录
+                  <span className="empty__hint">点右上角 + 记录第一次</span>
+                </div>
+              ) : null}
             </div>
           </>
         ) : null}
@@ -255,7 +278,7 @@ export default function GrowthPage() {
           <>
             <div className="metrics">
               <div className="metric">
-                <div className="metric__label">今日小便</div>
+                <div className="metric__label">近 7 天小便</div>
                 <div className="metric__value">
                   {diapers.wet}
                   <small>次</small>
@@ -263,40 +286,36 @@ export default function GrowthPage() {
                 <div className="metric__delta">共 {diapers.total} 次更换</div>
               </div>
               <div className="metric">
-                <div className="metric__label">今日大便</div>
+                <div className="metric__label">近 7 天大便</div>
                 <div className="metric__value">
                   {diapers.dirty}
                   <small>次</small>
                 </div>
-                <div className="metric__delta">{diapers.lastAt ? `最近 ${timeHM(diapers.lastAt)}` : '今天还没有'}</div>
+                <div className="metric__delta">{diapers.lastAt ? `最近 ${timeHM(diapers.lastAt)}` : '近 7 天还没有'}</div>
               </div>
               <div className="metric metric--accent">
                 <div className="metric__label">最近更换</div>
                 <div className="metric__value" style={{ fontSize: 'calc(20px * var(--type-scale, 1))' }}>
                   {diapers.lastAt ? timeHM(diapers.lastAt) : '—'}
                 </div>
-                <div className="metric__delta">按时间倒序</div>
+                <div className="metric__delta">
+                  {diapers.lastAt ? (isSameDay(diapers.lastAt, now) ? '今天 · 按时间倒序' : `${shortDate(diapers.lastAt)} · 按时间倒序`) : '按时间倒序'}
+                </div>
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              {(
-                [
-                  { k: 'wet', l: '小便' },
-                  { k: 'dirty', l: '大便' },
-                  { k: 'both', l: '都有' },
-                ] as const
-              ).map((o) => (
+            <div className="diaper-filter" role="group" aria-label="筛选尿布记录">
+              {DIAPER_FILTERS.map((f) => (
                 <button
-                  key={o.k}
-                  className="btn btn--quiet"
-                  style={{ flex: 1, height: 46 }}
-                  onClick={() => {
-                    dispatch({ type: 'addDiaper', diaper: { id: uid('d'), at: Date.now(), kind: o.k } })
-                    toast(`已记录 · ${o.l}`)
-                  }}
+                  key={f.key}
+                  type="button"
+                  className="diaper-filter__item"
+                  aria-pressed={diaperFilter === f.key}
+                  onClick={() => setDiaperFilter(f.key)}
                 >
-                  {o.l}
+                  <Icon name={f.icon} size={16} />
+                  <span>{f.label}</span>
+                  <b>{diaperFilterCounts[f.key]}</b>
                 </button>
               ))}
             </div>
@@ -305,7 +324,7 @@ export default function GrowthPage() {
               <div className="divider-label" style={{ marginTop: 22 }}>
                 最近记录
               </div>
-              {todayDiapers.map((d) => (
+              {filteredDiapers.map((d) => (
                 <div key={d.id} className="record">
                   <span className="record__time">{timeHM(d.at)}</span>
                   <div className="record__main">
@@ -314,10 +333,21 @@ export default function GrowthPage() {
                     </div>
                     <div className="record__meta">{shortDate(d.at)} · {d.note ?? '常规更换'}</div>
                   </div>
-                  <Icon name={d.kind === 'dirty' ? 'diaper' : 'drop'} size={17} />
+                  <Icon name={d.kind === 'wet' ? 'drop' : d.kind === 'dirty' ? 'diaper' : 'both'} size={17} />
                 </div>
               ))}
-              {todayDiapers.length === 0 ? <div className="empty">今天还没有尿布记录</div> : null}
+              {filteredDiapers.length === 0 ? (
+                <div className="empty">
+                  {todayDiapers.length === 0 ? '近 7 天还没有尿布记录' : '没有符合筛选的尿布记录'}
+                  {todayDiapers.length === 0 ? (
+                    <span className="empty__hint">点右上角 + 记录第一次</span>
+                  ) : (
+                    <button className="empty__action" onClick={() => setDiaperFilter('all')}>
+                      查看全部
+                    </button>
+                  )}
+                </div>
+              ) : null}
             </div>
             <p className="about-note">若出现颜色异常、血丝或伴随发热，请及时咨询儿科医生。</p>
           </>

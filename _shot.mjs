@@ -96,25 +96,41 @@ try {
   /* ignore */
 }
 await sleep(500)
+if (process.env.SHOT_EVAL) {
+  await send('Runtime.evaluate', {
+    expression: process.env.SHOT_EVAL,
+    awaitPromise: true,
+    returnByValue: true,
+  })
+  await sleep(250)
+}
 
-// 先把视口拉到整页高度，fixed 底栏才会落在页面底部而不是首屏底部
-const first = await send('Page.getLayoutMetrics')
-const fullH = Math.min(Math.ceil((first.cssContentSize ?? first.contentSize).height), 6000)
-await send('Emulation.setDeviceMetricsOverride', {
-  width: Number(w),
-  height: fullH,
-  deviceScaleFactor: Number(dpr),
-  mobile: true,
-})
-await sleep(450)
+// 默认拉高视口拍整页；SHOT_VIEWPORT=1 时只拍当前手机视口（用于底部 Sheet）。
+const viewportShot = process.env.SHOT_VIEWPORT === '1'
+let size
+if (viewportShot) {
+  size = { width: Number(w), height: Number(h) }
+} else {
+  const first = await send('Page.getLayoutMetrics')
+  const fullH = Math.min(Math.ceil((first.cssContentSize ?? first.contentSize).height), 6000)
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: Number(w),
+    height: fullH,
+    deviceScaleFactor: Number(dpr),
+    mobile: true,
+  })
+  await sleep(450)
+  const metrics = await send('Page.getLayoutMetrics')
+  size = metrics.cssContentSize ?? metrics.contentSize
+}
 
-const metrics = await send('Page.getLayoutMetrics')
-const size = metrics.cssContentSize ?? metrics.contentSize
 const shot = await send('Page.captureScreenshot', {
   format: 'png',
-  captureBeyondViewport: true,
+  captureBeyondViewport: !viewportShot,
   fromSurface: true,
-  clip: { x: 0, y: 0, width: Math.ceil(size.width), height: Math.ceil(size.height), scale: 1 },
+  ...(viewportShot
+    ? {}
+    : { clip: { x: 0, y: 0, width: Math.ceil(size.width), height: Math.ceil(size.height), scale: 1 } }),
 })
 writeFileSync(out, Buffer.from(shot.data, 'base64'))
 console.log(`${out} ${Math.ceil(size.width)}x${Math.ceil(size.height)}`)

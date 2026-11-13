@@ -5,6 +5,7 @@ import AiThinking from '../components/AiThinking'
 import { SectionHead } from '../components/Common'
 import { Sheet } from '../components/Sheet'
 import { DiaperSheet, GrowthSheet, SleepSheet } from '../components/QuickSheets'
+import { FeedSheet } from '../components/FeedSheet'
 import { useStore, isAppState } from '../data/store'
 import type { AppState } from '../data/types'
 import { usePrefs } from '../lib/prefs'
@@ -22,6 +23,7 @@ import {
 } from '../lib/date'
 import { diaperCountsToday, feedStats, latestGrowth, previousGrowth, sleepMinutesToday } from '../lib/stats'
 import { navigate } from '../lib/route'
+import { usePhotoInk, usePhotoInkMap } from '../lib/photoTone'
 import { API, HERO, HOME, QUICK_ACTIONS } from '../data/config'
 
 const QUOTE_CACHE_KEY = 'nestory.dailyQuote.v1'
@@ -61,7 +63,12 @@ function requestDailyQuote(key: string, state: AppState): Promise<DailyQuote | n
       const res = await fetch(API.dailyQuote, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state }),
+        body: JSON.stringify({
+          baby: state.baby,
+          feeds: state.feeds,
+          sleeps: state.sleeps,
+          diapers: state.diapers,
+        }),
       })
       if (!res.ok) return null
       const payload = await res.json()
@@ -88,25 +95,40 @@ function requestDailyQuote(key: string, state: AppState): Promise<DailyQuote | n
 export default function HomePage() {
   const { state, dispatch, toast } = useStore()
   const { prefs } = usePrefs()
-  const [sheet, setSheet] = useState<null | 'diaper' | 'sleep' | 'growth'>(null)
+  const [sheet, setSheet] = useState<null | 'feed' | 'diaper' | 'sleep' | 'growth'>(null)
   const [heroSlide, setHeroSlide] = useState(0)
   const [quote, setQuote] = useState<DailyQuote | null>(() =>
     readCachedQuote(state.baby.name, state.baby.birthday),
   )
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+
+  const quoteKey =
+    state.baby.name.trim() && state.baby.birthday
+      ? quoteCacheKey(state.baby.name, state.baby.birthday)
+      : ''
 
   useEffect(() => {
-    if (quote) return
-    if (!state.baby.name.trim() || !state.baby.birthday) return
+    if (!quoteKey) {
+      setQuote(null)
+      return
+    }
+    const cached = readCachedQuote(state.baby.name, state.baby.birthday)
+    if (cached) {
+      setQuote(cached)
+      return
+    }
     let cancelled = false
-    const cacheKey = quoteCacheKey(state.baby.name, state.baby.birthday)
-
-    void requestDailyQuote(cacheKey, state).then((next) => {
+    setQuote(null)
+    void requestDailyQuote(quoteKey, stateRef.current).then((next) => {
       if (next && !cancelled) setQuote(next)
     })
     return () => {
       cancelled = true
     }
-  }, [quote, state])
+  }, [quoteKey, state.baby.name, state.baby.birthday])
 
   const [photoSheet, setPhotoSheet] = useState(false)
   const [photoStep, setPhotoStep] = useState<'grid' | 'pick'>('grid')
@@ -125,8 +147,21 @@ export default function HomePage() {
       : state.photos.slice(0, HERO.maxPhotos).map((photo) => photo.id)
     const picked = ids.map((id) => byId.get(id)).filter((photo) => photo != null)
     if (!picked.length) return []
-    return picked.map((photo) => ({ src: photo.src, alt: photo.caption || '宝宝照片' }))
+    return picked.map((photo) => ({
+      id: photo.id,
+      src: photo.src,
+      alt: photo.caption || '宝宝照片',
+    }))
   }, [state.photos, state.heroPhotoIds])
+
+  const heroTones = usePhotoInkMap(
+    heroSlides.map(({ id, src }) => ({ id, src })),
+    heroSlides.length > 0,
+  )
+  const heroImgRef = useRef<HTMLImageElement>(null)
+  const activeHero = heroSlides[heroSlide]
+  const activeHeroInk = usePhotoInk(heroImgRef, activeHero?.id)
+  const activeHeroTone = activeHeroInk ?? (activeHero ? heroTones[activeHero.id] : undefined)
 
   const goHero = (index: number) => {
     const track = heroTrack.current
@@ -215,10 +250,10 @@ export default function HomePage() {
         body: JSON.stringify({ state }),
       })
       if (!res.ok) {
-        throw new Error(res.status >= 500 ? '服务端没有响应，请确认后端已启动' : `后端返回 HTTP ${res.status}`)
+        throw new Error('AI 暂时不可用，请稍后再试')
       }
       const payload = await res.json()
-      if (!isAppState(payload.state)) throw new Error('返回的数据不是 AppState v3')
+      if (!isAppState(payload.state)) throw new Error('生成失败，请稍后再试')
       dispatch({ type: 'hydrate', state: payload.state })
       setAi({
         status: 'done',
@@ -246,6 +281,10 @@ export default function HomePage() {
   const albumPhotos = [...state.photos].sort((a, b) => b.at - a.at)
   const photos = albumPhotos.slice(0, HOME.recentPhotos)
   const photoById = new Map(albumPhotos.map((photo) => [photo.id, photo]))
+  const pickerTones = usePhotoInkMap(
+    albumPhotos.map((photo) => ({ id: photo.id, src: photo.thumb })),
+    photoSheet,
+  )
   const milestones = [...state.milestones].sort((a, b) => b.at - a.at).slice(0, HOME.milestones)
   const hasActivity =
     state.feeds.length + state.sleeps.length + state.diapers.length + state.growths.length > 0
@@ -260,7 +299,10 @@ export default function HomePage() {
 
   return (
     <div className="page">
-      <header className={`hero${heroSlides.length ? '' : ' hero--empty'}`}>
+      <header
+        className={`hero${heroSlides.length ? '' : ' hero--empty'}`}
+        data-photo-ink={activeHeroTone}
+      >
         <div
           className="hero__track"
           ref={heroTrack}
@@ -275,8 +317,9 @@ export default function HomePage() {
           }}
         >
           {heroSlides.map((photo, index) => (
-            <div className="hero__slide" key={photo.src} aria-hidden={index !== heroSlide}>
+            <div className="hero__slide" key={photo.id} aria-hidden={index !== heroSlide}>
               <img
+                ref={index === heroSlide ? heroImgRef : undefined}
                 className="hero__img"
                 src={photo.src}
                 alt={photo.alt}
@@ -331,19 +374,19 @@ export default function HomePage() {
             <span className="hero__quote-text" key={quote?.text ?? HERO.quote}>
               {quote?.text ?? HERO.quote}
             </span>
-          </p>        </div>
-
-        <div className="hero__dots" role="group" aria-label="切换首页照片">
-          {heroSlides.map((photo, index) => (
-            <button
-              key={photo.src}
-              type="button"
-              className={`hero__dot${index === heroSlide ? ' hero__dot--on' : ''}`}
-              aria-label={`第 ${index + 1} 张照片`}
-              aria-current={index === heroSlide ? 'true' : undefined}
-              onClick={() => goHero(index)}
-            />
-          ))}
+          </p>
+          <div className="hero__dots" role="group" aria-label="切换首页照片">
+            {heroSlides.map((photo, index) => (
+              <button
+                key={photo.id}
+                type="button"
+                className={`hero__dot${index === heroSlide ? ' hero__dot--on' : ''}`}
+                aria-label={`第 ${index + 1} 张照片`}
+                aria-current={index === heroSlide ? 'true' : undefined}
+                onClick={() => goHero(index)}
+              />
+            ))}
+          </div>
         </div>
       </header>
 
@@ -353,10 +396,8 @@ export default function HomePage() {
             <button
               key={action.key}
               className="quick__item"
-              onClick={() => {
-                if (action.target === 'feed') navigate('feed')
-                else setSheet(action.target)
-              }}
+              aria-label={`快速记录${action.label}`}
+              onClick={() => setSheet(action.target)}
             >
               <span className="quick__circle">
                 <Icon name={action.icon} size={action.key === 'feed' ? 25 : 24} />
@@ -365,10 +406,14 @@ export default function HomePage() {
             </button>
           ))}
         </div>
-        <button className="overview__cta quick-strip__cta" onClick={() => navigate('record')}>
-          <Icon name="feed" size={22} />
+        <button
+          className="overview__cta quick-strip__cta"
+          aria-label="查看喂养记录"
+          onClick={() => navigate('feed')}
+        >
+          <Icon name="clock" size={22} />
           <span className="overview__cta-main">
-            <span className="overview__cta-title">记录这次喂养</span>
+            <span className="overview__cta-title">喂养记录</span>
             <span className="overview__cta-sub">
               {stats.lastAt
                 ? `上次 ${timeHM(stats.lastAt)} · 已过 ${minutesLabel(stats.sinceLastMin)}`
@@ -507,7 +552,6 @@ export default function HomePage() {
             {photos.map((p) => (
               <button key={p.id} className="strip__item" onClick={() => navigate('album')} aria-label={p.caption}>
                 <img src={p.thumb} alt={p.caption} loading="lazy" />
-                {p.kind === 'live' ? <span className="strip__badge">LIVE</span> : null}
                 {p.kind === 'video' ? (
                   <span className="strip__badge">
                     <Icon name="play" size={8} />
@@ -610,6 +654,7 @@ export default function HomePage() {
                       key={photo.id}
                       type="button"
                       className="hero-cell"
+                      data-photo-ink={pickerTones[photo.id]}
                       onClick={() => openPicker(index)}
                       aria-label={`第 ${index + 1} 张，${photo.caption}，点击更换`}
                     >
@@ -683,6 +728,7 @@ export default function HomePage() {
                     key={photo.id}
                     type="button"
                     className={`hero-pick${current ? ' hero-pick--on' : ''}`}
+                    data-photo-ink={pickerTones[photo.id]}
                     onClick={() => chooseForSlot(photo.id)}
                     aria-pressed={current}
                     aria-label={`${photo.caption}${used >= 0 ? `，当前第 ${used + 1} 张` : ''}`}
@@ -707,6 +753,7 @@ export default function HomePage() {
         )}
       </Sheet>
 
+      <FeedSheet open={sheet === 'feed'} onClose={() => setSheet(null)} />
       <DiaperSheet open={sheet === 'diaper'} onClose={() => setSheet(null)} />
       <SleepSheet open={sheet === 'sleep'} onClose={() => setSheet(null)} />
       <GrowthSheet open={sheet === 'growth'} onClose={() => setSheet(null)} />

@@ -46,7 +46,6 @@ const button: CSSProperties = {
  */
 export default function BootScreen({
   status,
-  message,
   onRetry,
 }: {
   status: 'loading' | 'error'
@@ -95,28 +94,11 @@ export default function BootScreen({
           </>
         ) : (
           <>
-            <p style={{ margin: 0, fontSize: 15 }}>没能连上本地后端</p>
+            <p style={{ margin: 0, fontSize: 15 }}>暂时连不上 Nestory</p>
 
             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: 'var(--ink-2)' }}>
-              先在项目根目录运行
-              <br />
-              <code
-                style={{
-                  display: 'inline-block',
-                  marginTop: 6,
-                  padding: '4px 10px',
-                  borderRadius: 6,
-                  background: 'var(--ivory-deep)',
-                  fontSize: 12.5,
-                }}
-              >
-                python backend/server.py
-              </code>
+              检查网络后再试一次，你的记录不会丢失。
             </p>
-
-            {message ? (
-              <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-3)', wordBreak: 'break-word' }}>{message}</p>
-            ) : null}
 
             <button type="button" style={button} onClick={onRetry ?? (() => undefined)}>
               重新连接

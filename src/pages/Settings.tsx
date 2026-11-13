@@ -99,7 +99,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-            记录会自动保存到这台电脑的 MySQL；退出后需要重新登录才能查看。
+            记录会自动保存；退出后需要重新登录才能查看。
           </p>
         </section>
 
@@ -139,7 +139,7 @@ export default function SettingsPage() {
           <div className="switch-row" style={{ borderBottom: 'none' }}>
             <div>
               <div className="switch-row__title">减少动态效果</div>
-              <div className="switch-row__sub">减弱页面切换与抽屉的过渡动画</div>
+              <div className="switch-row__sub">让翻页与弹层更安静</div>
             </div>
             <button
               className={`switch${prefs.reduceMotion ? ' switch--on' : ''}`}
@@ -267,7 +267,7 @@ export default function SettingsPage() {
           </div>
 
           <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-            照片会压缩后再保存，视频与 Live 短片存在账号的媒体库里，换设备登录也能看到。
+            照片和视频会保存在你的账号里，换设备登录也能看到。
           </p>
 
           {user.isDemo ? (
@@ -332,7 +332,7 @@ export default function SettingsPage() {
         </section>
 
         <p className="settings-foot">
-          设置只影响这台设备。家庭成员共享的是记录，不共享各自的阅读与提醒偏好。
+          这些偏好只属于你，不改变家人的设置。
         </p>
       </div>
 
@@ -361,7 +361,7 @@ export default function SettingsPage() {
         }
       >
         <p className="about-copy" style={{ marginBottom: 0 }}>
-          示例数据只替换文字记录，媒体库里的照片与视频不会被删除。
+          示例数据只替换文字记录，照片与视频不会被删除。
         </p>
       </Sheet>
 
@@ -379,7 +379,7 @@ export default function SettingsPage() {
         {policy === 'privacy' ? (
           <div className="policy">
             <p>Nestory 记录的是家庭里最私人的一部分。我们的原则很简单：</p>
-            <p>一、宝宝的记录、照片与文字保存在你的账号与本机数据库里，不进入任何公开推荐，也不用于广告或模型训练。</p>
+            <p>一、宝宝的记录、照片与文字保存在你的账号里，不进入任何公开推荐，也不用于广告或模型训练。</p>
             <p>二、家庭成员共享时，由管理员决定每位家人是管理员、可编辑还是只读。</p>
             <p>三、你可以随时删除自己的照片与视频，或恢复示例数据清空当前记录。</p>
             <p>四、通知只用于喂养提醒，不包含营销内容。</p>

@@ -6,6 +6,7 @@ import { Sheet } from '../components/Sheet'
 import { useStore, uid } from '../data/store'
 import type { FeedRecord } from '../data/types'
 import { clock, durationLabel, minutesLabel, shortSpan, startOfDay, timeHM } from '../lib/date'
+import { isBeforeBirth } from '../lib/birth'
 import { feedIntervals, feedStats, last7Days } from '../lib/stats'
 import type { FeedKind } from '../lib/stats'
 import { goBack, navigate } from '../lib/route'
@@ -171,6 +172,14 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
       : breastTotal > 0
         ? breastStart ?? Date.now() - breastTotal * 1000
         : timeToStart(feedTime)
+    if (isBeforeBirth(startedAt, state.baby)) {
+      toast('喂养时间不能早于宝宝的生日')
+      return
+    }
+    if (startedAt > Date.now() + 60_000) {
+      toast('喂养时间不能晚于现在')
+      return
+    }
     const record: FeedRecord = {
       id: editing?.id ?? uid('f'),
       startedAt,

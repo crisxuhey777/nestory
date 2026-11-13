@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'vitest'
 import { addMonths, ageBetween, ageLabel, daysUntilAnniversary, durationLabel, shortSpan } from '../src/lib/date'
-import { feedIntervals, feedStats, last7Days, latestGrowth, sleepMinutesToday } from '../src/lib/stats'
+import { diaperCountsSince, feedIntervals, feedStats, last7Days, latestGrowth, sleepMinutesToday, sleepStatsSince } from '../src/lib/stats'
 import type { FeedRecord, SleepRecord } from '../src/data/types'
 
 let pass = 0
@@ -126,6 +126,31 @@ test('近 7 天与睡眠', () => {
   const minutes = sleepMinutesToday(sleeps, new Date(2026, 10, 11, 23, 45).getTime())
   eq('今日睡眠分钟数（跨日裁剪）', minutes, 360 + 150)
   eq('时长文案', durationLabel(150 * 60), '2 小时 30 分')
+})
+
+// ---------- 成长页近 7 天口径 ----------
+test('近 7 天睡眠与尿布（跨日）', () => {
+  const now = new Date(2026, 10, 13, 12, 0).getTime()
+  const weekStart = new Date(2026, 10, 6, 12, 0).getTime()
+  const sleeps: SleepRecord[] = [
+    { id: 's1', startedAt: new Date(2026, 10, 12, 22, 0).getTime(), endedAt: new Date(2026, 10, 13, 6, 0).getTime() },
+    { id: 's2', startedAt: new Date(2026, 10, 13, 10, 0).getTime(), endedAt: new Date(2026, 10, 13, 11, 0).getTime() },
+  ]
+  const sleepWeek = sleepStatsSince(sleeps, weekStart, now)
+  eq('近 7 天睡眠分钟数', sleepWeek.minutes, 9 * 60)
+  eq('近 7 天睡眠次数', sleepWeek.count, 2)
+  eq('最近一次睡眠开始', sleepWeek.lastStartedAt, sleeps[1].startedAt)
+
+  const diapers = [
+    { id: 'd1', at: new Date(2026, 10, 12, 19, 30).getTime(), kind: 'wet' as const },
+    { id: 'd2', at: new Date(2026, 10, 13, 8, 0).getTime(), kind: 'both' as const },
+    { id: 'd3', at: new Date(2026, 9, 1, 8, 0).getTime(), kind: 'dirty' as const },
+  ]
+  const diaperWeek = diaperCountsSince(diapers, weekStart)
+  eq('近 7 天小便', diaperWeek.wet, 2)
+  eq('近 7 天大便', diaperWeek.dirty, 1)
+  eq('近 7 天更换总数', diaperWeek.total, 2)
+  eq('近 7 天最近更换', diaperWeek.lastAt, diapers[1].at)
 })
 
 // ---------- 生长与纪念日 ----------

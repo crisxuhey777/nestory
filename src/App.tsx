@@ -8,6 +8,7 @@ import FeedPage from './pages/Feed'
 import GrowthPage from './pages/Growth'
 import AlbumPage from './pages/Album'
 import ProfilePage from './pages/Profile'
+import BabyProfilePage from './pages/BabyProfile'
 import RemindersPage from './pages/Reminders'
 import AboutPage from './pages/About'
 import SettingsPage from './pages/Settings'
@@ -38,6 +39,7 @@ function Shell() {
         {route === 'growth' ? <GrowthPage /> : null}
         {route === 'album' ? <AlbumPage /> : null}
         {route === 'profile' ? <ProfilePage /> : null}
+        {route === 'baby' ? <BabyProfilePage /> : null}
         {route === 'reminders' ? <RemindersPage /> : null}
         {route === 'about' ? <AboutPage /> : null}
         {route === 'settings' ? <SettingsPage /> : null}

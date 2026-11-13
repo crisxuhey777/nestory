@@ -75,8 +75,15 @@ async function evaluate(expression) {
   return r.result.value
 }
 
+let loaded = false
 async function goto(path) {
-  await send('Page.navigate', { url: BASE + path })
+  if (!loaded) {
+    await send('Page.navigate', { url: BASE + path })
+    loaded = true
+  } else {
+    const hash = path.startsWith('/#') ? path.slice(1) : path
+    await evaluate(`location.hash = ${JSON.stringify(hash)}`)
+  }
   await sleep(750)
   try {
     await evaluate('document.fonts.ready')
@@ -113,20 +120,58 @@ await click('.segmented__item:nth-child(2)')
 await sleep(230)
 check('growth: sleep tab shows 2 stats', (await count('.metric')) === 2)
 check('growth: sleep tab meta', (await has('.tab-head__meta')) === true)
+check(
+  'growth: sleep has no inline add button',
+  (await evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('记录睡眠'))`)) === false,
+)
 
 await click('.segmented__item:nth-child(3)')
 await sleep(230)
 check('growth: diaper tab shows 3 stats', (await count('.metric')) === 3)
-check('growth: diaper quick add buttons', (await count('.page__body .btn--quiet')) >= 3)
+check('growth: no diaper quick-add buttons', (await count('.page__body .btn--quiet')) === 0)
+check('growth: four diaper filters', (await count('.diaper-filter__item')) === 4)
+await evaluate(
+  `[...document.querySelectorAll('.diaper-filter__item')].find((b) => b.textContent.includes('混合'))?.click()`,
+)
+await sleep(220)
+check(
+  'growth: mixed filter only shows mixed records',
+  (await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('.record__title')];
+    return rows.length > 0 && rows.every((el) => el.textContent.trim() === '小便 + 大便');
+  })()`)) === true,
+)
+
+await evaluate(
+  `[...document.querySelectorAll('.diaper-filter__item')].find((b) => b.textContent.includes('小便'))?.click()`,
+)
+await sleep(220)
+check(
+  'growth: wet filter excludes mixed records',
+  (await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('.record__title')];
+    return rows.length > 0 && rows.every((el) => el.textContent.trim() === '小便');
+  })()`)) === true,
+)
 
 // ---------- Album ----------
 await goto('/#/album')
+for (let i = 0; i < 40 && !(await has('.album-cover')); i++) await sleep(100)
 check('album: no back button', (await count('.screen-head')) === 0)
 check('album: tab header title', (await has('.tab-head__title')) === true)
 check('album: cover photo', (await has('.album-cover')) === true)
 check('album: cover caption', (await has('.album-cover__cap')) === true)
-check('album: cover excluded from grid', (await count('.album-card')) === 5)
-check('album: month groups', (await count('.months')) === 2)
+check('album: preview caps at four cells', (await count('.album-card')) === 4)
+check('album: fourth cell is more', (await count('.album-card--more')) === 1)
+check('album: all view has no month headers', (await count('.months')) === 0)
+
+await click('.album-card--more')
+await sleep(350)
+check('album: more opens full page', (await has('.album-all')) === true)
+check('album: full page shows every photo', (await count('.album-all .album-card')) === 5)
+await click('.album-all__head .icon-btn')
+await sleep(300)
+check('album: full page back returns', (await has('.album-all')) === false)
 
 await click('.album-cover')
 await sleep(320)
@@ -135,10 +180,19 @@ await click('.lightbox__close')
 await sleep(250)
 check('album: lightbox closes', (await has('.lightbox')) === false)
 
+await click('.chip-row .chip:nth-child(2)')
+await sleep(300)
+check('album: 11 month filter keeps cover', (await has('.album-cover')) === true)
+check('album: 11 month has four cells', (await count('.album-card')) === 4)
+check('album: 11 month has no more', (await count('.album-card--more')) === 0)
+check('album: 11 month keeps one header', (await count('.months')) === 1)
+
 await click('.chip-row .chip:nth-child(3)')
 await sleep(300)
-check('album: month filter keeps cover', (await has('.album-cover')) === true)
-check('album: month filter shrinks grid', (await count('.album-card')) === 0)
+check('album: month filter keeps its photo', (await count('.album-card')) === 1)
+check('album: month filter keeps one month header', (await count('.months')) === 1)
+const coverCap = await evaluate(`document.querySelector('.album-cover__cap')?.textContent || ''`)
+check('album: cover stays global latest', coverCap.includes('11 月 11 日'), coverCap)
 
 check('no runtime exceptions', errors.length === 0, errors.join(' / '))
 

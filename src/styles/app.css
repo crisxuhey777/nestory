@@ -355,6 +355,22 @@
   border-radius: 26px 26px 0 0;
   box-shadow: 0 -20px 60px -20px rgba(34, 54, 42, 0.4);
   animation: sheet-up 0.3s var(--ease);
+  transition: transform 0.2s var(--ease);
+}
+
+.sheet--dragging {
+  transition: none;
+}
+
+.sheet__head {
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sheet--dragging .sheet__head {
+  cursor: grabbing;
 }
 
 .sheet__grab {
@@ -501,6 +517,27 @@ textarea.input {
   font-size: calc(12.5px * var(--type-scale, 1));
   line-height: 1.8;
   color: var(--ink-3);
+}
+
+.empty__hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-4);
+  font-size: calc(11.5px * var(--type-scale, 1));
+}
+
+.empty__action {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--forest);
+  font: inherit;
+  font-size: calc(11.5px * var(--type-scale, 1));
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .divider-label {
@@ -879,6 +916,7 @@ textarea.input {
 .ai-panel__cta:active {
   transform: translateY(1px);
 }
+
 
 .ai-panel--busy {
   min-height: 176px;

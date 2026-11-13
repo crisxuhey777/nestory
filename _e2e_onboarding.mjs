@@ -74,13 +74,15 @@ const check = (name, ok, extra = '') => {
   console.log(`${ok ? '✓' : '✗'} ${name}${extra ? ` — ${extra}` : ''}`)
 }
 const clickText = async (text) => {
-  const ok = await evaluate(`(() => {
+  const found = await waitFor(`(() => {
+    return [...document.querySelectorAll('button')].some((b) => b.textContent.trim().includes(${JSON.stringify(text)}))
+  })()`, 8000)
+  if (!found) throw new Error(`button not found: ${text}`)
+  await evaluate(`(() => {
     const el = [...document.querySelectorAll('button')].find((b) => b.textContent.trim().includes(${JSON.stringify(text)}))
-    if (!el) return false
     el.click()
     return true
   })()`)
-  if (!ok) throw new Error(`button not found: ${text}`)
   await sleep(320)
 }
 const setInput = async (selector, value) => {

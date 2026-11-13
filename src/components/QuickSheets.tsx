@@ -3,6 +3,7 @@ import { Sheet } from './Sheet'
 import { Icon } from '../brand/icons'
 import { uid, useStore } from '../data/store'
 import { DAY, timeHM, toISODate } from '../lib/date'
+import { isBeforeBirth } from '../lib/birth'
 
 function atDateTime(dateValue: string, timeValue: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return null
@@ -12,8 +13,12 @@ function atDateTime(dateValue: string, timeValue: string): number | null {
 }
 
 export function DiaperSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { dispatch, toast } = useStore()
+  const { state, dispatch, toast } = useStore()
   const add = (kind: 'wet' | 'dirty' | 'both', label: string) => {
+    if (isBeforeBirth(Date.now(), state.baby)) {
+      toast('尿布记录不能早于宝宝的生日')
+      return
+    }
     dispatch({ type: 'addDiaper', diaper: { id: uid('d'), at: Date.now(), kind } })
     toast(`已记录 · ${label} · ${timeHM(Date.now())}`)
     onClose()
@@ -25,7 +30,7 @@ export function DiaperSheet({ open, onClose }: { open: boolean; onClose: () => v
           [
             { kind: 'wet', label: '小便', icon: 'drop' },
             { kind: 'dirty', label: '大便', icon: 'diaper' },
-            { kind: 'both', label: '都有', icon: 'check' },
+            { kind: 'both', label: '混合', icon: 'both' },
           ] as const
         ).map((o) => (
           <button
@@ -78,6 +83,10 @@ export function SleepSheet({ open, onClose }: { open: boolean; onClose: () => vo
     }
     if (endAt - startAt > DAY) {
       toast('单次睡眠不能超过 24 小时')
+      return
+    }
+    if (isBeforeBirth(startAt, state.baby)) {
+      toast('睡眠开始时间不能早于宝宝的生日')
       return
     }
     if (startAt > Date.now() + 60_000 || endAt > Date.now() + 60_000) {
@@ -136,6 +145,7 @@ export function SleepSheet({ open, onClose }: { open: boolean; onClose: () => vo
               className="input"
               type="date"
               value={endDate}
+              min={state.baby.birthday || undefined}
               onChange={(e) => setEndDate(e.target.value)}
             />
           </label>
@@ -158,6 +168,7 @@ export function SleepSheet({ open, onClose }: { open: boolean; onClose: () => vo
                 className="input"
                 type="date"
                 value={startDate}
+                min={state.baby.birthday || undefined}
                 onChange={(e) => setStartDate(e.target.value)}
               />
             </label>
@@ -179,6 +190,7 @@ export function SleepSheet({ open, onClose }: { open: boolean; onClose: () => vo
                 className="input"
                 type="date"
                 value={endDate}
+                min={state.baby.birthday || undefined}
                 onChange={(e) => setEndDate(e.target.value)}
               />
             </label>
@@ -210,16 +222,31 @@ export function GrowthSheet({ open, onClose }: { open: boolean; onClose: () => v
   const [head, setHead] = useState('')
 
   const save = () => {
-    const w = Number(weight)
-    const h = Number(height)
-    const hd = Number(head)
-    if (!w && !h && !hd) return
+    const parse = (raw: string) => {
+      const text = raw.trim()
+      if (!text) return undefined
+      const value = Number(text)
+      return Number.isFinite(value) ? value : NaN
+    }
+    const w = parse(weight)
+    const h = parse(height)
+    const hd = parse(head)
+    if ([w, h, hd].some((value) => value !== undefined && (!Number.isFinite(value) || value <= 0))) {
+      toast('成长数据需要填写正数')
+      return
+    }
+    if (w == null && h == null && hd == null) return
     const today = new Date()
+    const at = new Date(today.getFullYear(), today.getMonth(), today.getDate(), today.getHours(), today.getMinutes()).getTime()
+    if (isBeforeBirth(at, state.baby)) {
+      toast('成长记录不能早于宝宝的生日')
+      return
+    }
     dispatch({
       type: 'addGrowth',
       growth: {
         id: uid('g'),
-        at: new Date(today.getFullYear(), today.getMonth(), today.getDate(), today.getHours(), today.getMinutes()).getTime(),
+        at,
         weightKg: w || undefined,
         heightCm: h || undefined,
         headCm: hd || undefined,

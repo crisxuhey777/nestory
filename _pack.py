@@ -28,6 +28,7 @@ ROOT_FILES = [
     "_e2e_exit.mjs",
     "_e2e_auth.mjs",
     "_e2e_onboarding.mjs",
+    "_e2e_sheet.mjs",
     "_e2e_autosave.mjs",
     "_login_session.mjs",
     "_shot.mjs",

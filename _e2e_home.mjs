@@ -90,6 +90,9 @@ function check(name, ok, detail = '') {
 await send('Page.navigate', { url: `${BASE}/#/home` })
 await sleep(1400)
 
+const heroTone = await evaluate(`document.querySelector('.hero')?.dataset.photoInk`)
+check('hero exposes a photo tone', ['light', 'dark'].includes(heroTone), heroTone)
+
 const setup = await evaluate(`(() => {
   const track = document.querySelector('.hero__track')
   return {
@@ -219,7 +222,7 @@ const picker = await evaluate(`(() => ({
   current: document.querySelectorAll('.hero-pick--on').length,
 }))()`)
 check('点照片进入替换视图', picker.title.includes('选择第 1 格'), picker.title)
-check('选择页只列相册已有照片', picker.options === 6 && picker.add === 0, `${picker.options} / ${picker.add}`)
+check('选择页只列相册已有照片', picker.options === 5 && picker.add === 0, `${picker.options} / ${picker.add}`)
 check('标出当前这一格', picker.current === 1, String(picker.current))
 
 await evaluate(`document.querySelector('.hero-pick:not(.hero-pick--on):not(.hero-pick--add)').click()`)
@@ -261,7 +264,7 @@ check('已选数量同步为 3', cleared.count.includes('3 / 4'), cleared.count)
 
 await evaluate(`document.querySelector('.hero-cell--add').click()`)
 await sleep(400)
-await evaluate(`document.querySelector('.hero-pick').click()`)
+await evaluate(`(document.querySelector('.hero-pick:not(:has(.hero-pick__no))') || document.querySelector('.hero-pick')).click()`)
 await sleep(450)
 const refilled = await evaluate(`document.querySelectorAll('.hero-cell img').length`)
 check('点加号可选择并补满四格', refilled === 4, String(refilled))

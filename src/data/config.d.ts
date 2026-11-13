@@ -10,8 +10,6 @@ export type MediaTrigger =
   | 'photoCamera'
   | 'videoLibrary'
   | 'videoCamera'
-  | 'liveLibrary'
-  | 'liveCamera'
 export type QuickTarget = 'feed' | 'sleep' | 'diaper' | 'growth'
 
 export const APP: {
@@ -28,6 +26,8 @@ export const API: {
   aiSummary: string
   aiAnalysis: string
   aiStory: string
+  aiDescribe: string
+  aiCaption: string
 }
 
 export const STORAGE_KEYS: {

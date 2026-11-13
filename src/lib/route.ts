@@ -7,6 +7,7 @@ export type Route =
   | 'growth'
   | 'album'
   | 'profile'
+  | 'baby'
   | 'reminders'
   | 'about'
   | 'settings'
@@ -18,6 +19,7 @@ const ROUTES: Route[] = [
   'growth',
   'album',
   'profile',
+  'baby',
   'reminders',
   'about',
   'settings',
@@ -30,6 +32,7 @@ const TITLES: Record<Route, string> = {
   growth: '成长记录 · Nestory',
   album: '成长相册 · Nestory',
   profile: '我的家庭 · Nestory',
+  baby: '宝宝资料 · Nestory',
   reminders: '提醒中心 · Nestory',
   about: '关于 Nestory',
   settings: '设置 · Nestory',

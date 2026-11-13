@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const BASE = 'http://127.0.0.1:5178'
+const BASE = 'http://localhost:5178'
 const port = 9950 + Math.floor(Math.random() * 40)
 const profile = mkdtempSync(join(tmpdir(), 'nestory-save-'))
 const chrome = spawn(
@@ -81,9 +81,12 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 430, height: 900, deviceScaleFactor: 2, mobile: true })
   await send('Page.navigate', { url: `${BASE}/#/home` })
   await sleep(1200)
-  await waitFor('!!document.querySelector(".auth")')
+  if (!(await waitFor('!!document.querySelector(".auth")', 20000))) {
+    throw new Error('登录页未出现')
+  }
   const set = (sel, value) => `(() => {
     const el = document.querySelector(${JSON.stringify(sel)})
+    if (!el) throw new Error('找不到输入框: ' + ${JSON.stringify(sel)})
     const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
     d.call(el, ${JSON.stringify(value)})
     el.dispatchEvent(new Event('input', { bubbles: true }))

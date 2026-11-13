@@ -15,6 +15,8 @@ export type IconName =
   | 'timer'
   | 'sleep'
   | 'diaper'
+  | 'all'
+  | 'both'
   | 'weight'
   | 'camera'
   | 'video'
@@ -125,6 +127,21 @@ const shapes: Record<IconName, ReactNode> = {
     <>
       <rect x="3.8" y="4.4" width="16.4" height="3.6" rx="1.8" fill={A} />
       <path d="M4 9.4h16c.4 5-2.9 9.8-8 9.8S3.6 14.4 4 9.4Z" fill="currentColor" />
+    </>
+  ),
+  all: (
+    <>
+      <rect x="3.4" y="3.4" width="7.2" height="7.2" rx="2.4" fill="currentColor" />
+      <rect x="13.4" y="3.4" width="7.2" height="7.2" rx="2.4" fill={A} />
+      <rect x="3.4" y="13.4" width="7.2" height="7.2" rx="2.4" fill={A} />
+      <rect x="13.4" y="13.4" width="7.2" height="7.2" rx="2.4" fill="currentColor" />
+    </>
+  ),
+  both: (
+    <>
+      <path d="M9.2 3.2c2.5 3.4 5.2 6.5 5.2 9.2a5 5 0 0 1-10 0c0-2.7 2.7-5.8 5.2-9.2Z" fill="currentColor" />
+      <rect x="13.4" y="12.2" width="7.2" height="2" rx="1" fill={A} />
+      <path d="M13.8 14.8h6.4c.2 2.3-1.3 4.4-3.2 4.4s-3.4-2.1-3.2-4.4Z" fill={A} />
     </>
   ),
   weight: (

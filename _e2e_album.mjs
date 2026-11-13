@@ -100,6 +100,28 @@ async function upload(index, file) {
   if (!nodes[index]) throw new Error(`no file input ${index}`)
   await send('DOM.setFileInputFiles', { nodeId: nodes[index], files: [resolve(file)] })
 }
+async function setField(selector, value) {
+  await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)})
+    if (!el) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(el, ${JSON.stringify(value)})
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+}
+
+async function saveDraft(caption = '') {
+  const shown = await waitFor(`!!document.querySelector('.album-draft')`, 8000)
+  if (!shown) throw new Error('draft sheet did not open')
+  if (caption) await setField('.album-draft .input', caption)
+  await evaluate(
+    `[...document.querySelectorAll('.sheet button')].find((b) => b.textContent.includes('保存到相册'))?.click()`,
+  )
+  await waitFor(`!document.querySelector('.sheet')`, 6000)
+  await sleep(300)
+}
+
 async function waitFor(expression, timeout = 4000) {
   const started = Date.now()
   while (Date.now() - started < timeout) {
@@ -114,9 +136,9 @@ await evaluate('localStorage.clear()')
 await goto(BASE + '/#/album')
 
 // ---------- seeded live photo ----------
-check('相册显示瞬间总数', (await text('.tab-head__meta')).startsWith('6 个瞬间'), await text('.tab-head__meta'))
+check('相册显示瞬间总数', (await text('.tab-head__meta')).startsWith('5 个瞬间'), await text('.tab-head__meta'))
 check('封面带 LIVE 标记', (await evaluate(`document.querySelectorAll('.album-badge--live').length`)) >= 1, '')
-check('Live 封面标明会动', (await text('.album-cover__cap')).includes('会动'), await text('.album-cover__cap'))
+check('Live 封面标明 live', (await text('.album-cover__cap')).includes('live'), await text('.album-cover__cap'))
 
 await clickSel('.album-cover')
 await sleep(500)
@@ -135,14 +157,21 @@ await sleep(250)
 await clickSel('.tab-head .icon-btn')
 await sleep(450)
 check('添加入口打开抽屉', (await evaluate(`!!document.querySelector('.sheet')`)) === true, '')
-check('提供照片/视频/Live 六种入口', (await evaluate(`document.querySelectorAll('.media-opt').length`)) === 6, '')
-check('三个拍摄入口带 capture 属性', (await evaluate(`document.querySelectorAll('input[type=file][capture]').length`)) === 3, '')
-check('提示 Live 的工作原理', (await text('.media-note')).includes('Live'), '')
+const addShot = await send('Page.captureScreenshot', { format: 'png' })
+writeFileSync('shots/album-add-merged.png', Buffer.from(addShot.data, 'base64'))
+check('提供照片/视频两类四种入口', (await evaluate(`document.querySelectorAll('.media-opt').length`)) === 4, '')
+check('两个拍摄入口带 capture 属性', (await evaluate(`document.querySelectorAll('input[type=file][capture]').length`)) === 2, '')
+check('提示会动照片的工作原理', (await text('.media-note')).includes('Live'), '')
 
 // ---------- video upload ----------
 await upload(2, 'public/assets/videos/nest-live.mp4')
+await waitFor(`!!document.querySelector('.album-draft')`, 8000)
+await sleep(450)
+const draftShot = await send('Page.captureScreenshot', { format: 'png' })
+writeFileSync('shots/final-caption-sheet.png', Buffer.from(draftShot.data, 'base64'))
+await saveDraft('测试视频')
 await waitFor(`document.querySelectorAll('.album-card').length >= 4 && !document.querySelector('.sheet')`, 6000)
-check('视频上传后加入相册', (await text('.tab-head__meta')).startsWith('7 个瞬间'), await text('.tab-head__meta'))
+check('视频上传后加入相册', (await text('.tab-head__meta')).startsWith('6 个瞬间'), await text('.tab-head__meta'))
 check('视频封面有长度徽标', /0:0\d/.test(await text('.album-badge')), await text('.album-badge'))
 check('视频生成海报而不是黑屏', (await evaluate(`document.querySelector('.album-cover img').src.includes('/api/media/blob/')`)) === true, '')
 
@@ -160,14 +189,27 @@ await sleep(250)
 // ---------- live upload ----------
 await clickSel('.tab-head .icon-btn')
 await sleep(350)
-await upload(4, 'public/assets/videos/nest-live.mp4')
+await upload(0, 'public/assets/videos/nest-live.mp4')
+await saveDraft('会动的测试')
 await waitFor(`document.querySelectorAll('.album-badge--live').length >= 2`, 6000)
-check('Live 导入后出现会动照片', (await text('.album-cover__cap')).includes('会动的瞬间'), await text('.album-cover__cap'))
+check('Live 导入后出现会动照片', (await text('.album-cover__cap')).includes('会动的测试'), await text('.album-cover__cap'))
 check('Live 覆盖封面并带 LIVE', (await evaluate(`document.querySelectorAll('.album-badge--live').length`)) >= 2, '')
+
+await sleep(2200)
+await sleep(300)
+const savedMotion = await evaluate(`(() => {
+  const cover = document.querySelector('.album-cover')
+  return { kind: cover?.dataset.kind, motion: cover?.dataset.motion, cap: cover?.querySelector('.album-cover__cap b')?.textContent }
+})()`)
+check(
+  '会动的照片按「照片 + motion」保存',
+  savedMotion && savedMotion.kind === 'photo' && savedMotion.motion === 'true',
+  JSON.stringify(savedMotion),
+)
 
 // ---------- persistence ----------
 await goto(BASE + '/#/album')
-check('刷新后总数保留', (await text('.tab-head__meta')).startsWith('8 个瞬间'), await text('.tab-head__meta'))
+check('刷新后总数保留', (await text('.tab-head__meta')).startsWith('7 个瞬间'), await text('.tab-head__meta'))
 await clickSel('.album-cover')
 await sleep(500)
 check(
@@ -182,9 +224,25 @@ await sleep(250)
 await clickSel('.tab-head .icon-btn')
 await sleep(350)
 await upload(0, 'public/assets/photos/p3@520.jpg')
-await waitFor(`(document.querySelector('.tab-head__meta')?.textContent || '').startsWith('9 个瞬间')`, 8000)
-check('照片仍可上传', (await text('.tab-head__meta')).startsWith('9 个瞬间'), await text('.tab-head__meta'))
-check('照片上传后成为封面', (await text('.album-cover__cap')).includes('今天的模样'), await text('.album-cover__cap'))
+await saveDraft()
+await waitFor(`(document.querySelector('.tab-head__meta')?.textContent || '').startsWith('8 个瞬间')`, 8000)
+check('照片仍可上传', (await text('.tab-head__meta')).startsWith('8 个瞬间'), await text('.tab-head__meta'))
+check('不填标题时用日期兜底', /\d+ 月 \d+ 日/.test(await text('.album-cover__cap')), await text('.album-cover__cap'))
+
+await clickSel('.album-cover')
+await sleep(400)
+await evaluate(
+  `[...document.querySelectorAll('.lightbox__edit')][0]?.click()`,
+)
+await sleep(350)
+const editShot = await send('Page.captureScreenshot', { format: 'png' })
+writeFileSync('shots/final-caption-edit.png', Buffer.from(editShot.data, 'base64'))
+await setField('.sheet .input', '改过的标题')
+await evaluate(
+  `[...document.querySelectorAll('.sheet button')].find((b) => b.textContent.includes('保存标题'))?.click()`,
+)
+await sleep(500)
+check('全屏可以后改标题', (await text('.album-cover__cap')).includes('改过的标题'), await text('.album-cover__cap'))
 
 const errors = await evaluate(`window.__nestoryErrors ? window.__nestoryErrors.length : 0`).catch(() => 0)
 check('页面无脚本崩溃', errors === 0, String(errors))

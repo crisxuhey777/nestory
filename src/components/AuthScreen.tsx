@@ -143,9 +143,9 @@ export default function AuthScreen({ onSignIn, onSignUp }: Props) {
           </form>
 
           <p className="auth__note">
-            账号与记录保存在本机 <b>MySQL</b> 里
+            账号与记录会保存在你的 Nestory 空间里
             <br />
-            浏览器只保留一个登录 Cookie，换设备需要重新登录
+            换设备登录后可以继续查看
           </p>
         </div>
       </div>

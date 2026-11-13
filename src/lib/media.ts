@@ -55,6 +55,16 @@ export async function compressImage(file: File): Promise<string> {
   return dataURL(blob)
 }
 
+/** 给视觉模型用的小图：768px JPEG，避免把原图和大图传上云。 */
+export async function shrinkToDataURL(src: string, maxEdge = 768): Promise<string> {
+  const response = await fetch(src)
+  if (!response.ok) throw new Error('读取照片失败')
+  const blob = await response.blob()
+  const file = new File([blob], 'vision.jpg', { type: blob.type || 'image/jpeg' })
+  const { blob: small } = await compressToBlob(file, maxEdge, 0.82)
+  return dataURL(small)
+}
+
 function dataURL(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()

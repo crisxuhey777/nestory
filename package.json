@@ -15,6 +15,7 @@
     "test:e2e:layout": "node _e2e_layout.mjs",
     "test:e2e:album": "node _e2e_album.mjs",
     "test:e2e:lightbox": "node _e2e_lightbox.mjs",
+    "test:e2e:story": "node _e2e_ai_story.mjs",
     "test:e2e:home": "node _e2e_home.mjs",
     "test:e2e:viewport": "node _e2e_viewport.mjs",
     "test:e2e:tap": "node _e2e_tap.mjs",
@@ -22,6 +23,7 @@
     "test:e2e:exit": "node _e2e_exit.mjs",
     "test:e2e:auth": "node _e2e_auth.mjs",
     "test:e2e:onboarding": "node _e2e_onboarding.mjs",
+    "test:e2e:sheet": "node _e2e_sheet.mjs",
     "shots": "node _shot.mjs"
   },
   "dependencies": {

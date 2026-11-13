@@ -1,40 +1,13 @@
-import { useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import { useState } from 'react'
 import { Icon } from '../brand/icons'
 import { NestoryLogo } from '../brand/Logo'
 import { Sheet } from '../components/Sheet'
 import { useStore } from '../data/store'
-import { ageBetween, ageLabel, fromISODate, toISODate } from '../lib/date'
+import { ageBetween, ageLabel, fromISODate } from '../lib/date'
 import { navigate } from '../lib/route'
 import type { Route } from '../lib/route'
-import type { Baby, FamilyMember } from '../data/types'
+import type { FamilyMember } from '../data/types'
 import { APP, PERMISSIONS, PROFILE_MENU } from '../data/config'
-
-type BabyForm = {
-  name: string
-  birthday: string
-  birthTime: string
-  gender: Baby['gender']
-  birthWeightKg: string
-  birthHeightCm: string
-  birthHeadCm: string
-  birthplace: string
-  avatar: string
-}
-
-function toForm(baby: Baby): BabyForm {
-  return {
-    name: baby.name,
-    birthday: baby.birthday,
-    birthTime: baby.birthTime,
-    gender: baby.gender,
-    birthWeightKg: String(baby.birthWeightKg),
-    birthHeightCm: String(baby.birthHeightCm),
-    birthHeadCm: String(baby.birthHeadCm),
-    birthplace: baby.birthplace,
-    avatar: baby.avatar,
-  }
-}
 
 const PERMISSION_MAP = Object.fromEntries(
   PERMISSIONS.map((permission) => [permission.key, permission]),
@@ -46,42 +19,14 @@ const PERMISSION_OPTIONS = PERMISSIONS.map((permission) => ({
   desc: permission.desc,
 }))
 
-async function fileToAvatar(file: File): Promise<string> {
-  const url = URL.createObjectURL(file)
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image()
-      el.onload = () => resolve(el)
-      el.onerror = () => reject(new Error('image decode failed'))
-      el.src = url
-    })
-    const size = 512
-    const canvas = document.createElement('canvas')
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('canvas unavailable')
-    const scale = Math.max(size / img.width, size / img.height)
-    const w = img.width * scale
-    const h = img.height * scale
-    ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
-    return canvas.toDataURL('image/jpeg', 0.84)
-  } finally {
-    URL.revokeObjectURL(url)
-  }
-}
-
 export default function ProfilePage() {
   const { state, dispatch, toast } = useStore()
   const [share, setShare] = useState(false)
   const [privacy, setPrivacy] = useState(false)
-  const [babyOpen, setBabyOpen] = useState(false)
-  const [form, setForm] = useState<BabyForm>(() => toForm(state.baby))
   const [member, setMember] = useState<FamilyMember | null>(null)
   const [permError, setPermError] = useState('')
   const [removing, setRemoving] = useState<FamilyMember | null>(null)
-  const uploadRef = useRef<HTMLInputElement>(null)
-  const cameraRef = useRef<HTMLInputElement>(null)
+
   const now = Date.now()
   const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
   const age = hasBirth ? ageBetween(new Date(fromISODate(state.baby.birthday, 6, 20)), new Date(now)) : null
@@ -94,64 +39,6 @@ export default function ProfilePage() {
     state.baby.birthWeightKg > 0 ? `出生 ${state.baby.birthWeightKg} kg` : '',
     state.baby.birthHeightCm > 0 ? `${state.baby.birthHeightCm} cm` : '',
   ].filter(Boolean)
-
-  const openBaby = () => {
-    setForm(toForm(state.baby))
-    setBabyOpen(true)
-  }
-
-  const saveBaby = () => {
-    const name = form.name.trim()
-    if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(form.birthday)) {
-      toast('请填写昵称和生日')
-      return
-    }
-    if (form.birthTime && !/^\d{2}:\d{2}$/.test(form.birthTime)) {
-      toast('出生时间格式不正确')
-      return
-    }
-    const birthTs = Date.parse(`${form.birthday}T00:00:00`)
-    if (!Number.isFinite(birthTs) || birthTs > Date.now()) {
-      toast('出生日期不能晚于今天')
-      return
-    }
-    const num = (v: string, fallback: number) => {
-      const n = Number(v)
-      return Number.isFinite(n) && n > 0 ? n : fallback
-    }
-    dispatch({
-      type: 'updateBaby',
-      baby: {
-        name,
-        birthday: form.birthday,
-        birthTime: form.birthTime,
-        gender: form.gender,
-        birthWeightKg: num(form.birthWeightKg, state.baby.birthWeightKg),
-        birthHeightCm: num(form.birthHeightCm, state.baby.birthHeightCm),
-        birthHeadCm: num(form.birthHeadCm, state.baby.birthHeadCm),
-        birthplace: form.birthplace.trim() || state.baby.birthplace,
-        avatar: form.avatar,
-      },
-    })
-    setBabyOpen(false)
-    toast('宝宝资料已更新')
-  }
-
-  const onAvatarFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      toast('请选择一张照片')
-      return
-    }
-    try {
-      const avatar = await fileToAvatar(file)
-      setForm((prev) => ({ ...prev, avatar }))
-    } catch {
-      toast('这张照片读不出来，换一张试试')
-    }
-  }
 
   const changePermission = (next: FamilyMember['permission']) => {
     if (!member || member.permission === next) return
@@ -197,10 +84,6 @@ export default function ProfilePage() {
     onClick: menuActions[item.key],
   }))
 
-  const avatarChoices = Array.from(
-    new Set([form.avatar, ...state.photos.map((photo) => photo.thumb)]),
-  ).slice(0, 4)
-
   return (
     <div className="page">
       <header
@@ -238,7 +121,7 @@ export default function ProfilePage() {
               </span>
             ) : null}
           </div>
-          <button className="profile-hero__edit" aria-label="编辑宝宝资料" onClick={openBaby}>
+          <button className="profile-hero__edit" aria-label="编辑宝宝资料" onClick={() => navigate('baby')}>
             <Icon name="edit" size={14} />
           </button>
         </section>
@@ -309,7 +192,7 @@ export default function ProfilePage() {
 
         <div className="sync-chip">
           <span className="sync-chip__dot" />
-          已登录 · 记录自动保存到本机数据库
+          已登录 · 记录会自动保存
         </div>
 
         <div className="brand-foot">
@@ -323,147 +206,6 @@ export default function ProfilePage() {
           <p className="brand-foot__ver">NESTORY V{APP.version} · {APP.year}</p>
         </div>
       </div>
-
-      <Sheet
-        open={babyOpen}
-        onClose={() => setBabyOpen(false)}
-        title="编辑宝宝资料"
-        desc="月龄、成长天数与出生信息会随着这里一起更新。"
-        footer={
-          <button className="btn btn--primary btn--full" onClick={saveBaby}>
-            保存资料
-          </button>
-        }
-      >
-        <div className="baby-form">
-          <label className="field">
-            <span className="field__label">昵称</span>
-            <input
-              className="input"
-              value={form.name}
-              maxLength={12}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="宝宝的小名"
-            />
-          </label>
-          <div className="field-row">
-            <label className="field">
-              <span className="field__label">出生日期</span>
-              <input
-                className="input"
-                type="date"
-                value={form.birthday}
-                max={toISODate(now)}
-                onChange={(e) => setForm({ ...form, birthday: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span className="field__label">出生时间</span>
-              <input
-                className="input"
-                type="time"
-                value={form.birthTime}
-                onChange={(e) => setForm({ ...form, birthTime: e.target.value })}
-              />
-            </label>
-          </div>
-          <div className="field">
-            <span className="field__label">性别</span>
-            <div className="segmented">
-              {([
-                ['girl', '女孩'],
-                ['boy', '男孩'],
-              ] as const).map(([v, l]) => (
-                <button
-                  key={v}
-                  type="button"
-                  className={`segmented__item${form.gender === v ? ' segmented__item--on' : ''}`}
-                  onClick={() => setForm({ ...form, gender: v })}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="field-row field-row--three">
-            <label className="field">
-              <span className="field__label">出生体重 · kg</span>
-              <input
-                className="input"
-                inputMode="decimal"
-                value={form.birthWeightKg}
-                onChange={(e) => setForm({ ...form, birthWeightKg: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span className="field__label">出生身长 · cm</span>
-              <input
-                className="input"
-                inputMode="decimal"
-                value={form.birthHeightCm}
-                onChange={(e) => setForm({ ...form, birthHeightCm: e.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span className="field__label">头围 · cm</span>
-              <input
-                className="input"
-                inputMode="decimal"
-                value={form.birthHeadCm}
-                onChange={(e) => setForm({ ...form, birthHeadCm: e.target.value })}
-              />
-            </label>
-          </div>
-          <label className="field">
-            <span className="field__label">出生地</span>
-            <input
-              className="input"
-              value={form.birthplace}
-              maxLength={20}
-              onChange={(e) => setForm({ ...form, birthplace: e.target.value })}
-              placeholder="例如 杭州"
-            />
-          </label>
-          <div className="field">
-            <span className="field__label">头像</span>
-            <div className="avatar-picker">
-              {avatarChoices.map((src, i) => (
-                <button
-                  key={`${src.slice(0, 24)}-${i}`}
-                  type="button"
-                  className={`avatar-picker__item${form.avatar === src ? ' avatar-picker__item--on' : ''}`}
-                  onClick={() => setForm({ ...form, avatar: src })}
-                  aria-label={i === 0 && form.avatar.startsWith('data:') ? '当前上传的头像' : '选择头像'}
-                >
-                  <img src={src} alt="" />
-                </button>
-              ))}
-            </div>
-            <div className="avatar-actions">
-              <button type="button" className="btn btn--quiet btn--sm" onClick={() => uploadRef.current?.click()}>
-                <Icon name="album" size={14} />
-                从相册上传
-              </button>
-              <button type="button" className="btn btn--quiet btn--sm" onClick={() => cameraRef.current?.click()}>
-                <Icon name="camera" size={14} />
-                拍一张
-              </button>
-            </div>
-            <input ref={uploadRef} className="sr-only" type="file" accept="image/*" onChange={onAvatarFile} />
-            <input
-              ref={cameraRef}
-              className="sr-only"
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={onAvatarFile}
-            />
-            <p className="timer__hint" style={{ textAlign: 'left', marginTop: 8 }}>
-              支持 JPG / PNG，会自动裁成方形并压缩，只保存在这台设备上。
-            </p>
-          </div>
-        </div>
-      </Sheet>
 
       <Sheet
         open={member !== null}
