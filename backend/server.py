@@ -53,6 +53,12 @@ import storage  # noqa: E402
 from app_state import build_state  # noqa: E402
 
 MAX_BODY = 12 * 1024 * 1024  # 整份 AppState（含压缩后的照片 data URL）可能到几 MB
+CAPTION_LIMIT = 6
+CAPTION_WINDOW = 60.0
+_CAPTION_HITS: dict[str, list[float]] = {}
+_CAPTION_LOCK = threading.Lock()
+DESCRIBE_LIMIT = 24
+_DESCRIBE_HITS: dict[str, list[float]] = {}
 
 # 传了 --static-dir（或 NESTORY_STATIC_DIR）时，同一个进程顺带把 dist/ 发出去，
 # 部署就只需要一个容器/一个端口；不传时行为和本地开发完全一致。
@@ -62,6 +68,8 @@ logger = logging.getLogger("nestory.http")
 
 
 class Handler(BaseHTTPRequestHandler):
+    # 慢连接（开着 socket 不发请求）最多占一个线程 60 秒
+    timeout = 60
     server_version = "NestoryLocal/0.2"
     sys_version = ""
     protocol_version = "HTTP/1.1"
@@ -155,9 +163,27 @@ class Handler(BaseHTTPRequestHandler):
     def _validate_state(state: dict) -> None:
         if state.get("version") != 3:
             raise ValueError("state.version must be 3")
+        baby = state.get("baby")
+        if not isinstance(baby, dict):
+            raise ValueError("state.baby must be an object")
         for key in ("feeds", "sleeps", "diapers", "growths", "milestones", "photos"):
-            if not isinstance(state.get(key), list):
+            items = state.get(key)
+            if not isinstance(items, list):
                 raise ValueError(f"state.{key} must be a list")
+            if len(items) > 50000:
+                raise ValueError(f"state.{key} has too many items")
+            if any(not isinstance(item, dict) for item in items):
+                raise ValueError(f"state.{key} items must be objects")
+        archived = state.get("archived")
+        if archived is not None:
+            if not isinstance(archived, dict):
+                raise ValueError("state.archived must be an object")
+            for key in ("feeds", "sleeps", "diapers", "growths", "milestones", "photos"):
+                items = archived.get(key)
+                if not isinstance(items, list):
+                    raise ValueError(f"state.archived.{key} must be a list")
+                if any(not isinstance(item, dict) for item in items):
+                    raise ValueError(f"state.archived.{key} items must be objects")
 
     def _read_state(self) -> dict:
         payload = self._read_json()
@@ -239,6 +265,8 @@ class Handler(BaseHTTPRequestHandler):
                         "POST /api/ai/summary",
                         "POST /api/ai/analysis",
                         "POST /api/ai/story",
+                        "POST /api/ai/caption",
+                        "POST /api/ai/describe",
                         "POST /api/daily-quote",
                         "GET /api/media",
                         "POST /api/media/presign",
@@ -254,6 +282,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             ai = llm.config()
+            vision = llm.vision_config()
             db_ok, db_detail = db.ping()
             self._ok(
                 {
@@ -266,6 +295,11 @@ class Handler(BaseHTTPRequestHandler):
                         "provider": ai["provider"],
                         "model": ai["model"],
                         "configured": bool(ai["key"]) or ai["provider"] == "pollinations",
+                    },
+                    "vision": {
+                        "provider": vision["provider"],
+                        "model": vision["model"],
+                        "configured": vision["configured"],
                     },
                     "backup": scheduler.status(),
                 }
@@ -306,6 +340,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/media/blob/"):
             self._media_blob(path.rsplit("/", 1)[-1])
+            return
+
+        # 未匹配的 /api/* 必须是 404，不能落进 SPA 的 index.html（否则调用方收到 HTML 200）
+        if path == "/api" or path.startswith("/api/"):
+            self._error(404, "not_found", path)
             return
 
         if STATIC_DIR is not None and self._serve_static(parsed.path):
@@ -386,6 +425,9 @@ class Handler(BaseHTTPRequestHandler):
         except accounts.ApiError as exc:
             self._fail(exc)
             return
+        if row.get("state") != "ready":
+            self._error(404, "not_found", "媒体还没上传完成")
+            return
         if storage.driver() == "s3":
             # 私有桶：302 到短时效签名地址，浏览器自己下载，不占应用带宽
             self.send_response(302)
@@ -393,6 +435,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "private, max-age=600")
             self.send_header("Content-Length", "0")
             self.end_headers()
+            self._log(302, 0)
             return
         path = storage.local_path(row["object_key"])
         if not path.is_file():
@@ -589,13 +632,40 @@ class Handler(BaseHTTPRequestHandler):
             self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}"})
             return
 
+        if path == "/api/ai/caption":
+            self._ai_caption()
+            return
+
+        if path == "/api/ai/describe":
+            self._ai_describe()
+            return
+
         if path in auth_routes:
             auth_routes[path]()
+            return
+
+        if path == "/api/daily-quote":
+            if self._authed() is None:
+                return
+            try:
+                payload = self._read_json()
+            except ValueError as exc:
+                self._error(400, "bad_request", str(exc))
+                return
+            state = payload.get("state") if isinstance(payload.get("state"), dict) else payload
+            if not isinstance(state, dict):
+                self._error(400, "bad_request", "invalid state")
+                return
+            self._daily_quote(state)
             return
 
         handler = ai_routes.get(path)
         if handler is None:
             self._error(404, "not_found", path)
+            return
+
+        # 这几条会调用付费模型：必须登录，匿名请求一律 401
+        if self._authed() is None:
             return
 
         try:
@@ -737,6 +807,102 @@ class Handler(BaseHTTPRequestHandler):
         }
         self._send_ai(payload, "analysis", result["analysis"]["headline"], result["elapsedMs"])
 
+    def _ai_caption(self) -> None:
+        """照片起标题：只接受内联压缩图，不抓 URL、不读整份 state。"""
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            payload = self._read_json()
+        except ValueError as exc:
+            self._error(400, "bad_request", str(exc))
+            return
+        image = payload.get("image")
+        if not isinstance(image, str) or not image.strip():
+            self._error(400, "bad_request", "缺少图片")
+            return
+        # 3MB 原图 → base64 约 4MB；留出 JSON 余量
+        if len(image) > 4_300_000:
+            self._error(413, "too_large", "图片太大，请压缩后再试")
+            return
+        hint = payload.get("hint")
+        if hint is not None and not isinstance(hint, str):
+            self._error(400, "bad_request", "hint 必须是字符串")
+            return
+
+        now = time.monotonic()
+        uid = str(user.get("id") or "")
+        with _CAPTION_LOCK:
+            hits = [stamp for stamp in _CAPTION_HITS.get(uid, []) if now - stamp < CAPTION_WINDOW]
+            if len(hits) >= CAPTION_LIMIT:
+                self._error(429, "rate_limited", "起标题太频繁了，歇一会儿再试")
+                return
+            hits.append(now)
+            _CAPTION_HITS[uid] = hits
+
+        try:
+            result = llm.caption(image, hint or "")
+        except llm.VisionError as exc:
+            logger.warning("rid=%s ai tag=caption status=%s", self._rid, exc.status)
+            self._error(exc.status, "vision_error", str(exc))
+            return
+
+        payload_out = {"source": "ai", **result}
+        self._ok(payload_out)
+        logger.info(
+            "rid=%s ai tag=caption user=%s model=%s elapsed=%dms titles=%d",
+            self._rid,
+            uid[:8],
+            result["model"],
+            result["elapsedMs"],
+            len(result["titles"]),
+        )
+
+    def _ai_describe(self) -> None:
+        """画面描述：为相册故事缓存视觉理解；只接收内联压缩图。"""
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            payload = self._read_json()
+        except ValueError as exc:
+            self._error(400, "bad_request", str(exc))
+            return
+        image = payload.get("image")
+        if not isinstance(image, str) or not image.strip():
+            self._error(400, "bad_request", "缺少图片")
+            return
+        if len(image) > 4_300_000:
+            self._error(413, "too_large", "图片太大，请压缩后再试")
+            return
+
+        now = time.monotonic()
+        uid = str(user.get("id") or "")
+        with _CAPTION_LOCK:
+            hits = [stamp for stamp in _DESCRIBE_HITS.get(uid, []) if now - stamp < CAPTION_WINDOW]
+            if len(hits) >= DESCRIBE_LIMIT:
+                self._error(429, "rate_limited", "看图太频繁了，歇一会儿再试")
+                return
+            hits.append(now)
+            _DESCRIBE_HITS[uid] = hits
+
+        try:
+            result = llm.describe(image)
+        except llm.VisionError as exc:
+            logger.warning("rid=%s ai tag=describe status=%s", self._rid, exc.status)
+            self._error(exc.status, "vision_error", str(exc))
+            return
+
+        self._ok({"source": "ai", **result})
+        logger.info(
+            "rid=%s ai tag=describe user=%s model=%s elapsed=%dms chars=%d",
+            self._rid,
+            uid[:8],
+            result["model"],
+            result["elapsedMs"],
+            len(result["description"]),
+        )
+
     def _ai_story(self, state: dict) -> None:
         result = ai_insights.story(state)
         now = int(time.time() * 1000)
@@ -760,15 +926,40 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_HEAD(self) -> None:  # noqa: N802
-        self.send_response(200)
-        self.send_header("Content-Length", "0")
+        """只回状态码和长度，别对任意路径都谎报 200（会骗过探活）。"""
+        self._t0 = time.perf_counter()
+        path = unquote(urlsplit(self.path).path)
+        status, size = 404, 0
+        if path in ("/api", "/api/health"):
+            status = 200
+        elif path.startswith("/api/"):
+            status = 404
+        elif STATIC_DIR is None:
+            status = 200 if path in ("", "/", "/index.html") else 404
+        else:
+            try:
+                rel = path.lstrip("/") or "index.html"
+                target = (STATIC_DIR / rel).resolve()
+                if target != STATIC_DIR and STATIC_DIR not in target.parents:
+                    target = None
+                if target is not None and target.is_dir():
+                    target = target / "index.html"
+                if target is not None and not target.is_file():
+                    target = None if Path(rel).suffix else STATIC_DIR / "index.html"
+                if target is not None and target.is_file():
+                    status, size = 200, target.stat().st_size
+            except (OSError, ValueError):
+                status = 404
+        self.send_response(status)
+        self.send_header("Content-Length", str(size))
         self.end_headers()
+        self._log(status, 0)
 
     def _log(self, status: int, size: int) -> None:
         started = getattr(self, "_t0", None)
@@ -850,8 +1041,17 @@ def main() -> int:
     # 容器里数据库常常比应用晚 1-2 分钟就绪：放到后台等，别挡住端口监听（探针要能连上）。
     db_state = {"ok": False, "detail": "connecting"}
 
+    def _db_wait_seconds() -> float:
+        raw = os.environ.get("NESTORY_DB_WAIT", "600")
+        try:
+            seconds = float(raw)
+        except (TypeError, ValueError):
+            log.warning("invalid NESTORY_DB_WAIT=%r; using 600s", raw)
+            return 600.0
+        return max(0.0, seconds)
+
     def _prepare_db() -> None:
-        deadline = time.monotonic() + float(os.environ.get("NESTORY_DB_WAIT", "600"))
+        deadline = time.monotonic() + _db_wait_seconds()
         attempt = 0
         while True:
             db_ok, db_detail = db.ping()
@@ -861,6 +1061,7 @@ def main() -> int:
                     print(f"  ping     : ok · {db_detail}", flush=True)
                     print("  schema   : ready (users / sessions / user_state / media)", flush=True)
                     db_state.update(ok=True, detail=db_detail)
+                    log.info("database ready: %s", db_detail)
                     return
                 except Exception as exc:  # noqa: BLE001
                     db_detail = f"schema failed: {exc}"

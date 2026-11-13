@@ -119,7 +119,15 @@ def config() -> dict:
             cfg[field] = file_values[env_key]
         if env_key in os.environ:
             cfg[field] = os.environ[env_key]
-    cfg["port"] = int(cfg["port"])
+
+    raw_port = str(cfg.get("port", "")).strip()
+    try:
+        cfg["port"] = int(raw_port)
+    except (TypeError, ValueError):
+        # 环境变量写错不该让整个后端起不来，退回默认端口
+        cfg["port"] = int(DEFAULTS["port"])
+    if not 0 < cfg["port"] < 65536:
+        cfg["port"] = int(DEFAULTS["port"])
     return cfg
 
 

@@ -100,6 +100,69 @@ def _day_from_state(baby: dict) -> date | None:
     raise ApiError(400, "invalid_state", "state.baby.birthday should be YYYY-MM-DD")
 
 
+def _record_time(kind: str, record: dict):
+    key = "startedAt" if kind in ("feeds", "sleeps") else "at"
+    return record.get(key)
+
+
+def _archive_prebirth(state: dict) -> bool:
+    """Move records before the current birthday into state['archived'].
+
+    This runs on load and save. Records are never deleted; changing the birthday
+    back to an earlier date moves them back into the visible arrays.
+    """
+    keys = ("feeds", "sleeps", "diapers", "growths", "milestones", "photos")
+    archived = state.get("archived")
+    if not isinstance(archived, dict):
+        archived = {}
+    birth = _day_from_state(state.get("baby") or {})
+    changed = False
+    for kind in keys:
+        main = state.get(kind)
+        old = archived.get(kind)
+        main = [x for x in main if isinstance(x, dict)] if isinstance(main, list) else []
+        old = [x for x in old if isinstance(x, dict)] if isinstance(old, list) else []
+        merged = []
+        seen = set()
+        for item in [*old, *main]:
+            item_id = item.get("id")
+            if not item_id:
+                # 没有 id 的记录无法去重，但也不能在加载时悄悄丢掉
+                merged.append(item)
+                continue
+            if item_id in seen:
+                continue
+            seen.add(item_id)
+            merged.append(item)
+        keep = []
+        hide = []
+        for item in merged:
+            at = _record_time(kind, item)
+            if birth is not None and isinstance(at, (int, float)):
+                try:
+                    before = _ms_to_date(int(at)) < birth
+                except (OverflowError, OSError, ValueError):
+                    before = False
+                if before:
+                    hide.append(item)
+                    continue
+            keep.append(item)
+        if len(keep) != len(main) or len(hide) != len(old):
+            changed = True
+        state[kind] = keep
+        archived[kind] = hide
+    if archived:
+        state["archived"] = archived
+    visible_photo_ids = {p.get("id") for p in state.get("photos", []) if isinstance(p, dict)}
+    hero = state.get("heroPhotoIds")
+    if isinstance(hero, list):
+        filtered = [pid for pid in hero if pid in visible_photo_ids]
+        if filtered != hero:
+            state["heroPhotoIds"] = filtered
+            changed = True
+    return changed
+
+
 def _seed_state(baby_name: str, birthday: date) -> dict:
     from app_state import build_state
 
@@ -107,8 +170,6 @@ def _seed_state(baby_name: str, birthday: date) -> dict:
     state["baby"]["name"] = baby_name
     state["baby"]["birthday"] = birthday.isoformat()
     return state
-
-
 def _empty_state(baby_name: str = "", birthday: str = "") -> dict:
     from app_state import build_empty_state
 
@@ -164,6 +225,39 @@ def _save_state(conn, user_id: int, state: dict, baby_name: str, birthday: date 
         )
 
 
+def _normalize_demo_photos(state: dict) -> bool:
+    """早期演示数据里 p1 同时作为静态 ph1 与 live ph5 存在，合并成唯一一条 live 记录。"""
+    photos = [p for p in (state.get("photos") or []) if isinstance(p, dict)]
+    by_id = {p.get("id"): p for p in photos}
+    if "ph1" not in by_id or "ph5" not in by_id:
+        return False
+
+    live = by_id["ph5"]
+    if live.get("kind") in (None, "live"):
+        video = live.pop("video", None)
+        duration = live.pop("durationSec", None)
+        live["kind"] = "photo"
+        if video:
+            live["motion"] = {"video": video, "durationSec": duration or 3.5}
+
+    kept = [p for p in photos if p.get("id") != "ph1"]
+    valid = {p.get("id") for p in kept}
+    hero: list[str] = []
+    for pid in state.get("heroPhotoIds") or []:
+        pid = "ph5" if pid == "ph1" else pid
+        if pid in valid and pid not in hero:
+            hero.append(pid)
+    for photo in kept:
+        if len(hero) >= 4:
+            break
+        pid = photo.get("id")
+        if pid and pid not in hero:
+            hero.append(pid)
+    state["photos"] = kept
+    state["heroPhotoIds"] = hero[:4]
+    return True
+
+
 def _load_state(conn, row: dict) -> dict:
     with conn.cursor() as cur:
         cur.execute("SELECT state_json FROM user_state WHERE user_id = %s", (row["id"],))
@@ -202,6 +296,17 @@ def _load_state(conn, row: dict) -> dict:
                 loaded.get("version") if isinstance(loaded, dict) else type(loaded).__name__,
             )
         if state is not None:
+            normalized = _normalize_demo_photos(state)
+            archived = _archive_prebirth(state)
+            if normalized or archived:
+                _save_state(
+                    conn,
+                    row["id"],
+                    state,
+                    (state.get("baby") or {}).get("name") or row.get("baby_name") or "",
+                    _day_from_state(state.get("baby") or {}) or row.get("baby_birthday"),
+                )
+                log.info("normalized demo photo / pre-birth records user=%s", row["id"])
             return state
 
     # 老账号或数据损坏：建一份空状态，不再注入演示数据
@@ -337,12 +442,19 @@ def save_state(token: str | None, state: dict) -> dict:
     baby = state.get("baby") or {}
     baby_name = _s(baby.get("name")) or ""
     birthday = _day_from_state(baby)
-    baby["birthday"] = birthday.isoformat() if birthday else ""
 
     with _conn() as conn:
         row = _user_row_by_token(conn, token)
         if not row:
             raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
+        # 客户端漏字段时不要把已有档案清空：沿用库里保存的昵称和生日。
+        if not baby_name and row.get("baby_name"):
+            baby_name = row["baby_name"]
+        if birthday is None and row.get("baby_birthday"):
+            birthday = row["baby_birthday"]
+        baby["name"] = baby_name
+        baby["birthday"] = birthday.isoformat() if birthday else ""
+        _archive_prebirth(state)
         _save_state(conn, row["id"], state, baby_name, birthday)
     size = len(json.dumps(state, ensure_ascii=False, separators=(",", ":")))
     log.info(
@@ -365,7 +477,11 @@ def reset_state(token: str | None) -> dict:
             raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
         birthday = row.get("baby_birthday")
         if row.get("email") == "demo@nestory.local":
-            birthday = birthday or date.today()
+            # Demo fixtures are keyed to the fixed birthday; restoring the
+            # user-changed birthday would archive every fixture record.
+            from app_state import build_state
+
+            birthday = date.fromisoformat(build_state()["baby"]["birthday"])
             state = _seed_state(row.get("baby_name") or "宝宝", birthday)
         else:
             state = _empty_state(

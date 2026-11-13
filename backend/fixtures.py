@@ -9,7 +9,7 @@
   因此页面上的「20 分钟前喂过奶」永远是相对当下的，不会随着日期推移变成历史。
 """
 
-TEST_HERO_IDS = ["ph1", "ph3", "ph4", "ph2"]
+TEST_HERO_IDS = ["ph5", "ph3", "ph4", "ph2"]
 
 TEST_AVATARS = [
     "/assets/photos/p1@520.jpg",
@@ -48,10 +48,13 @@ TEST_PHOTOS = [
         "thumb": "/assets/photos/live-poster.jpg",
         "at": "2026-11-11 15:40",
         "caption": "睡着时的小呼吸",
+        "visualCaption": "宝宝裹在米白针织包被里侧睡，阳光从左侧落在脸颊和头发上",
         "author": "妈妈",
-        "kind": "live",
-        "video": "/assets/videos/nest-live.mp4",
-        "durationSec": 3.5,
+        "kind": "photo",
+        "motion": {
+            "video": "/assets/videos/nest-live.mp4",
+            "durationSec": 3.5,
+        },
     },
     {
         "id": "ph6",
@@ -59,18 +62,11 @@ TEST_PHOTOS = [
         "thumb": "/assets/photos/video-poster.jpg",
         "at": "2026-11-09 16:10",
         "caption": "手指轻轻动了一下",
+        "visualCaption": "大人的手托着宝宝攥紧的小手，宝宝闭着眼皱着眉",
         "author": "爸爸",
         "kind": "video",
         "video": "/assets/videos/nest-video.mp4",
         "durationSec": 3.2,
-    },
-    {
-        "id": "ph1",
-        "src": "/assets/photos/p1@1200.jpg",
-        "thumb": "/assets/photos/p1@520.jpg",
-        "at": "2026-11-06 09:20",
-        "caption": "在巢里睡着的样子",
-        "author": "妈妈",
     },
     {
         "id": "ph2",
@@ -78,6 +74,7 @@ TEST_PHOTOS = [
         "thumb": "/assets/photos/p3@520.jpg",
         "at": "2026-07-31 15:10",
         "caption": "满月，握住了爸爸的手",
+        "visualCaption": "宝宝躺在浅色床单上，闭着眼，小手抓住大人的手指",
         "author": "爸爸",
     },
     {
@@ -86,6 +83,7 @@ TEST_PHOTOS = [
         "thumb": "/assets/photos/p4@520.jpg",
         "at": "2026-11-10 14:05",
         "caption": "午后的小睡",
+        "visualCaption": "宝宝被奶油色针织毯包住，头靠在绿色枕头上睡得很沉",
         "author": "妈妈",
     },
     {
@@ -94,6 +92,7 @@ TEST_PHOTOS = [
         "thumb": "/assets/photos/p2@520.jpg",
         "at": "2026-11-08 10:40",
         "caption": "小袜子终于合脚了",
+        "visualCaption": "宝宝穿着灰色镂空针织小袜子，两只脚丫交叠在浅色床单上",
         "author": "外婆",
     },
 ]

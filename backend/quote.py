@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from datetime import date, datetime
 
@@ -99,6 +100,28 @@ FESTIVAL_QUOTES: dict[str, list[str]] = {
 }
 
 _CACHE: dict[str, dict] = {}
+_CACHE_LOCK = threading.Lock()
+CACHE_LIMIT = 512
+
+
+def _cache_get(key: str, now_s: float) -> dict | None:
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if not hit:
+            return None
+        if hit["expires"] <= now_s:
+            _CACHE.pop(key, None)
+            return None
+        return hit["value"]
+
+
+def _cache_put(key: str, value: dict, expires: float) -> None:
+    with _CACHE_LOCK:
+        if len(_CACHE) >= CACHE_LIMIT:
+            # 每宝宝每天一条，长期运行不能无限长；先淘汰最快过期的一批
+            for old_key, _ in sorted(_CACHE.items(), key=lambda kv: kv[1]["expires"])[:64]:
+                _CACHE.pop(old_key, None)
+        _CACHE[key] = {"value": value, "expires": expires}
 
 
 # --------------------------------------------------------------------------- 日期
@@ -157,6 +180,18 @@ def _occasion(baby: dict, today: date) -> dict | None:
             return {"kind": "birthday", "label": f"今天是{name}的一周岁生日"}
         if years >= 2:
             return {"kind": "birthday", "label": f"今天是{name}的 {years} 岁生日"}
+    # 2 月 29 日出生：平年在 2 月 28 日过生日
+    if (
+        born
+        and born.month == 2
+        and born.day == 29
+        and today.month == 2
+        and today.day == 28
+        and not calendar.isleap(today.year)
+    ):
+        years = today.year - born.year
+        if years >= 1:
+            return {"kind": "birthday", "label": f"今天是{name}的 {years} 岁生日"}
 
     if days_old is not None:
         if days_old == 30:
@@ -192,15 +227,34 @@ def _local_date(ms) -> date | None:
         return None
 
 
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _day_facts(state: dict, today: date) -> str:
-    feeds = [f for f in state.get("feeds") or [] if _local_date(f.get("startedAt")) == today]
-    sleeps = [s for s in state.get("sleeps") or [] if _local_date(s.get("startedAt")) == today]
-    diapers = [d for d in state.get("diapers") or [] if _local_date(d.get("at")) == today]
+    feeds = [
+        f
+        for f in state.get("feeds") or []
+        if isinstance(f, dict) and _local_date(f.get("startedAt")) == today
+    ]
+    sleeps = [
+        s
+        for s in state.get("sleeps") or []
+        if isinstance(s, dict) and _local_date(s.get("startedAt")) == today
+    ]
+    diapers = [
+        d
+        for d in state.get("diapers") or []
+        if isinstance(d, dict) and _local_date(d.get("at")) == today
+    ]
 
     minutes = 0
     for s in sleeps:
-        began = int(s.get("startedAt") or 0)
-        ended = int(s.get("endedAt") or 0)
+        began = _safe_int(s.get("startedAt"))
+        ended = _safe_int(s.get("endedAt"))
         if ended > began:
             minutes += (ended - began) // 60000
 
@@ -281,9 +335,9 @@ def daily(state: dict, now_ms: int | None = None) -> dict:
     baby = state.get("baby") or {}
     key = f"{baby.get('id') or baby.get('name')}:{today.isoformat()}"
 
-    hit = _CACHE.get(key)
-    if hit and hit["expires"] > time.time():
-        return {**hit["value"], "cached": True}
+    hit = _cache_get(key, now / 1000)
+    if hit:
+        return {**hit, "cached": True}
 
     occasion = _occasion(baby, today)
     started = time.time()
@@ -292,7 +346,7 @@ def daily(state: dict, now_ms: int | None = None) -> dict:
 
     try:
         text, provider = llm.complete(build_prompt(baby, today, occasion, _day_facts(state, today)))
-    except (OSError, ValueError, KeyError, TimeoutError) as exc:
+    except (OSError, ValueError, KeyError, TimeoutError, RuntimeError) as exc:
         log.warning("[quote] remote failed: %s: %s", type(exc).__name__, exc)
 
     quote = None
@@ -316,13 +370,10 @@ def daily(state: dict, now_ms: int | None = None) -> dict:
         "date": today.isoformat(),
         "quote": quote,
         "provider": provider,
-        "model": os.environ.get("NESTORY_LLM_MODEL", "openai"),
+        "model": llm.config().get("model") or "openai",
         "elapsedMs": int((time.time() - started) * 1000),
     }
-    _CACHE[key] = {
-        "value": value,
-        "expires": now / 1000 + (600 if provider == "local" else 86_400),
-    }
+    _cache_put(key, value, now / 1000 + (600 if provider == "local" else 86_400))
     return {**value, "cached": False}
 
 

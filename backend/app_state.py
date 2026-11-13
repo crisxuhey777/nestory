@@ -185,7 +185,7 @@ def build_state(now_ms: int | None = None) -> dict:
                 "at": local_time(item["at"]),
                 "caption": item["caption"],
                 "author": item["author"],
-                **_pick(item, "kind", "video", "durationSec"),
+                **_pick(item, "kind", "motion", "video", "videoId", "durationSec", "visualCaption", "visualAt"),
             }
         )
 

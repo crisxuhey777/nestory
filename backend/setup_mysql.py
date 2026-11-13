@@ -12,6 +12,7 @@ MySQL，请把 root 密码传进来：
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -70,6 +71,10 @@ def main() -> int:
         cur.execute("FLUSH PRIVILEGES")
     conn.close()
 
+    # init_schema() 通过 db.config() 连接；把本次 --host/--port 固定进环境，
+    # 否则用了非默认地址时会连回默认地址去建表。
+    os.environ["NESTORY_DB_HOST"] = args.host
+    os.environ["NESTORY_DB_PORT"] = str(args.port)
     db.init_schema()
     ok, detail = db.ping()
     print(f"database : {database} ready")

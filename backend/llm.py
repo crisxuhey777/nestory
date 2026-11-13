@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -97,13 +98,267 @@ def config() -> dict:
     }
 
 
+VISION_DEFAULT_BASE = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+VISION_MAX_BYTES = 3 * 1024 * 1024
+
+
+class VisionError(RuntimeError):
+    """视觉模型不可用或返回不可解析时抛出；status 供 HTTP 层映射。"""
+
+    def __init__(self, message: str, status: int = 502):
+        super().__init__(message)
+        self.status = status
+
+
+def vision_config() -> dict:
+    """视觉模型配置。Key 只从后端环境 / llm.env 读取，不返回给前端。"""
+    base = os.environ.get("NESTORY_VISION_BASE", "").strip() or VISION_DEFAULT_BASE
+    model = os.environ.get("NESTORY_VISION_MODEL", "").strip() or "glm-4v-flash"
+    key = os.environ.get("NESTORY_VISION_KEY", "").strip()
+    applied = set(_ENV_FILE["applied"])
+    names = ("NESTORY_VISION_BASE", "NESTORY_VISION_KEY", "NESTORY_VISION_MODEL")
+    configured = {name for name in names if os.environ.get(name)}
+    if not configured:
+        source = "defaults"
+    elif configured <= applied:
+        source = "llm.env"
+    elif applied:
+        source = "mixed"
+    else:
+        source = "environment"
+    return {
+        "configured": bool(key),
+        "provider": "openai-compatible",
+        "base": base,
+        "host": urllib.parse.urlsplit(base).netloc,
+        "model": model,
+        "key": ("***" + key[-4:]) if key else "",
+        "timeout": TIMEOUT,
+        "source": source,
+    }
+
+
+def _vision_titles(raw: str) -> list[str]:
+    data = parse_json(raw)
+    values = data.get("titles") if data else None
+    items: list[str] = []
+    if isinstance(values, list):
+        items = [str(item) for item in values]
+    else:
+        # 模型偶尔不按 JSON 返回：逐行取，去掉编号和引号
+        items = [line for line in re.split(r"[\r\n]+", raw or "") if line.strip()]
+    cleaned: list[str] = []
+    for item in items:
+        title = re.sub(r"^[\s\-*•·\d.、)）]+", "", item).strip()
+        title = title.strip().strip('"“”\'')
+        title = re.sub(r"\s+", " ", title)
+        if not title:
+            continue
+        title = title[:18]
+        if title not in cleaned:
+            cleaned.append(title)
+        if len(cleaned) == 3:
+            break
+    return cleaned
+
+
+def _prepare_image(image_data_url: str) -> str:
+    """校验内联压缩图；只接受 data URL，避免后端被当作抓取任意 URL 的代理。"""
+    image = (image_data_url or "").strip()
+    if not re.match(r"^data:image/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=\s]+$", image):
+        raise VisionError("图片格式不支持", 400)
+    payload = image.split(",", 1)[1]
+    if len(payload) * 3 // 4 > VISION_MAX_BYTES:
+        raise VisionError("图片太大，请压缩后再试", 413)
+    try:
+        base64.b64decode(re.sub(r"\s+", "", payload), validate=True)
+    except (ValueError, TypeError):
+        raise VisionError("图片数据不完整", 400) from None
+    return image
+
+
+def caption(image_data_url: str, hint: str = "") -> dict:
+    """让视觉模型给这张照片起 3 条候选标题。
+
+    image_data_url 必须是压缩后的 data:image/...;base64,...；不接受任意 URL，
+    避免把后端当代理去抓内网地址。密钥只在后端使用，不写入日志。
+    """
+    cfg = vision_config()
+    if not cfg["configured"]:
+        raise VisionError("视觉模型还没配置", 503)
+
+    image = _prepare_image(image_data_url)
+
+    safe_hint = re.sub(r"[\r\n\t]+", " ", hint or "").strip()[:80]
+    prompt = (
+        "你是家庭相册的编辑。看这张照片，写 3 条中文短标题，每条不超过 12 个字。"
+        "要具体、温柔、克制，像写在相册背面的一句话；不要感叹号，不要夸张，不要评价长相。"
+        "不要出现宝宝姓名、地点等隐私。"
+        + (f"参考信息：{safe_hint}。" if safe_hint else "")
+        + '只输出 JSON：{"titles":["...","...","..."]}'
+    )
+    body = json.dumps(
+        {
+            "model": cfg["model"],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image}},
+                    ],
+                }
+            ],
+            "temperature": 0.6,
+            "max_tokens": 300,
+        }
+    ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Nestory/1.0",
+        "Authorization": "Bearer " + os.environ["NESTORY_VISION_KEY"],
+    }
+    started = time.time()
+    req = urllib.request.Request(cfg["base"], data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        log.warning("vision http %s", exc.code)
+        if exc.code in (401, 403):
+            raise VisionError("视觉模型 Key 无效或无权限", 502) from None
+        if exc.code == 429:
+            raise VisionError("视觉模型额度或频率受限，稍后再试", 502) from None
+        raise VisionError("视觉模型暂时不可用", 502) from None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        log.warning("vision caption returned non-json")
+        raise VisionError("视觉模型返回格式异常", 502) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        log.warning("vision network failed")
+        raise VisionError("视觉模型连接超时", 504) from None
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise VisionError("视觉模型返回格式异常", 502) from None
+    if isinstance(content, list):
+        content = "".join(
+            str(part.get("text") or "") for part in content if isinstance(part, dict)
+        )
+    titles = _vision_titles(str(content or ""))
+    if not titles:
+        log.warning("vision unparseable output")
+        raise VisionError("这次没想出合适的标题，再试一次", 502)
+    return {
+        "titles": titles,
+        "provider": "openai-compatible",
+        "model": cfg["model"],
+        "elapsedMs": int((time.time() - started) * 1000),
+    }
+
+
+def _vision_description(raw: str) -> str:
+    """把模型的 JSON / 纯文本输出收成一句 60 字以内的画面描述。"""
+    data = parse_json(raw)
+    text = ""
+    if isinstance(data, dict):
+        text = str(data.get("description") or data.get("caption") or "")
+    if not text:
+        text = str(raw or "")
+    text = " ".join(text.replace("”", "").replace("“", "").split())
+    text = text.strip("。！？!?；;，, \"'")
+    if len(text) > 60:
+        text = text[:60].rstrip("，,。 ")
+    return text
+
+
+def describe(image_data_url: str) -> dict:
+    """让视觉模型只描述画面，供相册故事理解照片；不猜身份、不抒情。"""
+    cfg = vision_config()
+    if not cfg["configured"]:
+        raise VisionError("视觉模型还没配置", 503)
+
+    image = _prepare_image(image_data_url)
+    prompt = (
+        "你是家庭相册的记录者。只客观描述这张照片里看得见的内容："
+        "宝宝在做什么或什么姿势、衣物或毯子、光线、出现的身体部位或物品。"
+        "用一句中文，45 字以内；不猜年龄性别、不判断情绪、不出现姓名地点、"
+        "不抒情、不评价长相。只输出 JSON：{\"description\":\"...\"}"
+    )
+    body = json.dumps(
+        {
+            "model": cfg["model"],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image}},
+                    ],
+                }
+            ],
+            "temperature": 0.2,
+            "max_tokens": 160,
+        }
+    ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Nestory/1.0",
+        "Authorization": "Bearer " + os.environ["NESTORY_VISION_KEY"],
+    }
+    started = time.time()
+    req = urllib.request.Request(cfg["base"], data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        log.warning("vision describe http %s", exc.code)
+        if exc.code in (401, 403):
+            raise VisionError("视觉模型 Key 无效或无权限", 502) from None
+        if exc.code == 429:
+            raise VisionError("视觉模型额度或频率受限，稍后再试", 502) from None
+        raise VisionError("视觉模型暂时不可用", 502) from None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        log.warning("vision describe returned non-json")
+        raise VisionError("视觉模型返回格式异常", 502) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        log.warning("vision describe network failed")
+        raise VisionError("视觉模型连接超时", 504) from None
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise VisionError("视觉模型返回格式异常", 502) from None
+    if isinstance(content, list):
+        content = "".join(
+            str(part.get("text") or "") for part in content if isinstance(part, dict)
+        )
+    description = _vision_description(str(content or ""))
+    if not description:
+        log.warning("vision describe unparseable output")
+        raise VisionError("这次没看清照片，再试一次", 502)
+    return {
+        "description": description,
+        "provider": "openai-compatible",
+        "model": cfg["model"],
+        "elapsedMs": int((time.time() - started) * 1000),
+    }
+
+
 def probe() -> tuple[bool, str, int]:
     """启动时做一次最小调用，确认模型真的可用。"""
     started = time.time()
     try:
         text, provider = complete("请只回复：ok")
         return bool(text and text.strip()), provider, int((time.time() - started) * 1000)
-    except (OSError, ValueError, KeyError, urllib.error.URLError, TimeoutError) as exc:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        RuntimeError,
+        urllib.error.URLError,
+        TimeoutError,
+    ) as exc:
         return False, f"{type(exc).__name__}: {exc}", int((time.time() - started) * 1000)
 
 SYSTEM_HINT = (
@@ -122,30 +377,62 @@ def _local_midnight_ms(now_ms: int) -> int:
     return int(start.timestamp() * 1000)
 
 
+def _int(value, default: int = 0) -> int:
+    """客户端 state 只做了浅校验，时间/数字字段可能是字符串或缺失。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _number(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
 def summarize(state: dict, now_ms: int | None = None) -> dict:
     """把 AppState 里今天的记录压成一组可读数字（也给 prompt 用）。"""
     now = now_ms or int(time.time() * 1000)
     start = _local_midnight_ms(now)
 
-    feeds = [f for f in state.get("feeds", []) if int(f.get("startedAt", 0)) >= start]
-    bottle = sum(int(f.get("bottleMl") or 0) + int(f.get("formulaMl") or 0) for f in feeds)
-    nurse_min = sum(int(f.get("leftSec") or 0) + int(f.get("rightSec") or 0) for f in feeds) // 60
+    feeds = [
+        f for f in state.get("feeds", []) if isinstance(f, dict) and _int(f.get("startedAt")) >= start
+    ]
+    bottle = sum(_int(f.get("bottleMl")) + _int(f.get("formulaMl")) for f in feeds)
+    nurse_min = sum(_int(f.get("leftSec")) + _int(f.get("rightSec")) for f in feeds) // 60
 
-    sleeps = [s for s in state.get("sleeps", []) if int(s.get("startedAt", 0)) + 86400000 >= start]
+    sleeps = [
+        s
+        for s in state.get("sleeps", [])
+        if isinstance(s, dict) and _int(s.get("startedAt")) + 86400000 >= start
+    ]
     sleep_min = 0
     for s in sleeps:
-        began = max(int(s.get("startedAt", 0)), start)
-        ended = int(s.get("endedAt") or now)
+        began = max(_int(s.get("startedAt")), start)
+        ended = _int(s.get("endedAt"), now)
         sleep_min += max(0, (min(ended, now) - began) // 60000)
 
-    diapers = [d for d in state.get("diapers", []) if int(d.get("at", 0)) >= start]
+    diapers = [
+        d for d in state.get("diapers", []) if isinstance(d, dict) and _int(d.get("at")) >= start
+    ]
     diapers_wet = sum(1 for d in diapers if d.get("kind") in ("wet", "both"))
     diapers_dirty = sum(1 for d in diapers if d.get("kind") in ("dirty", "both"))
 
-    growths = sorted(state.get("growths", []), key=lambda g: int(g.get("at", 0)), reverse=True)
-    weight = next((g.get("weightKg") for g in growths if g.get("weightKg")), None)
+    growths = sorted(
+        [g for g in state.get("growths", []) if isinstance(g, dict)],
+        key=lambda g: _int(g.get("at")),
+        reverse=True,
+    )
+    weight = next((_number(g.get("weightKg")) for g in growths if _number(g.get("weightKg"))), None)
 
-    milestones = sorted(state.get("milestones", []), key=lambda m: int(m.get("at", 0)), reverse=True)
+    milestones = sorted(
+        [m for m in state.get("milestones", []) if isinstance(m, dict)],
+        key=lambda m: _int(m.get("at")),
+        reverse=True,
+    )
     recent = [str(m.get("title")) for m in milestones[:2] if m.get("title")]
 
     baby = state.get("baby") or {}
@@ -168,7 +455,7 @@ def summarize(state: dict, now_ms: int | None = None) -> dict:
         "sleep_segments": len(sleeps),
         "diaper_wet": diapers_wet,
         "diaper_dirty": diapers_dirty,
-        "weight": float(weight) if weight else None,
+        "weight": weight,
         "recent": recent,
         "now": now,
     }
@@ -246,7 +533,15 @@ def _post_openai_compatible(prompt: str) -> str:
     req = urllib.request.Request(base, data=body, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return data["choices"][0]["message"]["content"]
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("unexpected chat completion payload") from None
+    if isinstance(content, list):  # 部分兼容服务返回 [{type:text,text:...}]
+        content = "".join(
+            str(part.get("text") or "") for part in content if isinstance(part, dict)
+        )
+    return str(content or "")
 
 
 def _get_pollinations(prompt: str, model: str | None = None) -> str:

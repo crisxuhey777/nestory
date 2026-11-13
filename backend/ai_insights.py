@@ -44,8 +44,26 @@ def _age_text(days: int | None) -> str:
     return llm._age_label({"days_old": days, "months_old": days // 30})
 
 
+def _ms(value, default: int = 0) -> int:
+    """客户端提交的 state 没有经过深校验，时间/数字字段可能缺失或不是数字。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _num(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _hour(ms: int) -> int:
-    return datetime.fromtimestamp(ms / 1000).astimezone().hour
+    try:
+        return datetime.fromtimestamp(ms / 1000).astimezone().hour
+    except (OverflowError, OSError, ValueError):
+        return 0
 
 
 # --------------------------------------------------------------------------- 近 7 天
@@ -58,45 +76,57 @@ def week_facts(state: dict, now_ms: int | None = None, days: int = 7) -> dict:
     def within(ms: int) -> bool:
         return start <= ms <= now
 
-    feeds = [f for f in state.get("feeds", []) if within(int(f.get("startedAt") or 0))]
-    bottle = sum(int(f.get("bottleMl") or 0) + int(f.get("formulaMl") or 0) for f in feeds)
-    nurse_min = sum(int(f.get("leftSec") or 0) + int(f.get("rightSec") or 0) for f in feeds) // 60
+    feeds = [
+        f
+        for f in state.get("feeds", [])
+        if isinstance(f, dict) and within(_ms(f.get("startedAt")))
+    ]
+    bottle = sum(_ms(f.get("bottleMl")) + _ms(f.get("formulaMl")) for f in feeds)
+    nurse_min = sum(_ms(f.get("leftSec")) + _ms(f.get("rightSec")) for f in feeds) // 60
     feed_days = len(
         {
-            datetime.fromtimestamp(int(f["startedAt"]) / 1000).astimezone().date()
+            datetime.fromtimestamp(_ms(f.get("startedAt")) / 1000).astimezone().date()
             for f in feeds
         }
     )
 
-    sleeps = [s for s in state.get("sleeps", []) if int(s.get("startedAt") or 0) >= start - DAY_MS]
+    sleeps = [
+        s
+        for s in state.get("sleeps", [])
+        if isinstance(s, dict) and _ms(s.get("startedAt")) >= start - DAY_MS
+    ]
     sleep_min = 0
     night_segments = 0
     counted = 0
     for s in sleeps:
-        began = max(int(s.get("startedAt") or 0), start)
-        ended = int(s.get("endedAt") or now)
+        began = max(_ms(s.get("startedAt")), start)
+        ended = _ms(s.get("endedAt"), now)
         if ended <= began:
             continue
         sleep_min += max(0, (min(ended, now) - began) // 60000)
         counted += 1
-        hour = _hour(int(s.get("startedAt") or 0))
+        hour = _hour(_ms(s.get("startedAt")))
         if hour >= 22 or hour < 6:
             night_segments += 1
 
-    diapers = [d for d in state.get("diapers", []) if within(int(d.get("at") or 0))]
-    photos = [p for p in state.get("photos", []) if within(int(p.get("at") or 0))]
+    diapers = [
+        d for d in state.get("diapers", []) if isinstance(d, dict) and within(_ms(d.get("at")))
+    ]
+    photos = [
+        p for p in state.get("photos", []) if isinstance(p, dict) and within(_ms(p.get("at")))
+    ]
 
     growths = sorted(
-        [g for g in state.get("growths", []) if g.get("weightKg")],
-        key=lambda g: int(g.get("at") or 0),
+        [g for g in state.get("growths", []) if isinstance(g, dict) and _num(g.get("weightKg")) > 0],
+        key=lambda g: _ms(g.get("at")),
     )
-    weight_start = float(growths[-2]["weightKg"]) if len(growths) >= 2 else None
-    weight_end = float(growths[-1]["weightKg"]) if growths else None
+    weight_start = _num(growths[-2]["weightKg"]) if len(growths) >= 2 else None
+    weight_end = _num(growths[-1]["weightKg"]) if growths else None
     weight_delta = (weight_end - weight_start) if weight_start is not None else None
 
     milestones = sorted(
-        [m for m in state.get("milestones", []) if within(int(m.get("at") or 0))],
-        key=lambda m: int(m.get("at") or 0),
+        [m for m in state.get("milestones", []) if isinstance(m, dict) and within(_ms(m.get("at")))],
+        key=lambda m: _ms(m.get("at")),
         reverse=True,
     )
 
@@ -277,10 +307,18 @@ def analysis(state: dict, now_ms: int | None = None) -> dict:
 # --------------------------------------------------------------------------- 相册故事
 
 
+def _local_dt(ms: int) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(ms / 1000).astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def album_facts(state: dict, now_ms: int | None = None) -> dict:
     now = now_ms or int(time.time() * 1000)
     baby = state.get("baby") or {}
-    photos = sorted(state.get("photos", []), key=lambda p: int(p.get("at") or 0), reverse=True)
+    photos = [p for p in state.get("photos", []) if isinstance(p, dict)]
+    photos.sort(key=lambda p: _ms(p.get("at")), reverse=True)
 
     born = None
     try:
@@ -289,14 +327,16 @@ def album_facts(state: dict, now_ms: int | None = None) -> dict:
         pass
 
     span = ""
-    if photos:
-        first = datetime.fromtimestamp(int(photos[-1]["at"]) / 1000).astimezone()
-        last = datetime.fromtimestamp(int(photos[0]["at"]) / 1000).astimezone()
-        span = f"{first.month} 月 {first.day} 日 到 {last.month} 月 {last.day} 日"
+    stamped = [p for p in photos if _ms(p.get("at")) > 0]
+    if stamped:
+        first = _local_dt(_ms(stamped[-1].get("at")))
+        last = _local_dt(_ms(stamped[0].get("at")))
+        if first and last:
+            span = f"{first.month} 月 {first.day} 日 到 {last.month} 月 {last.day} 日"
 
     milestones = sorted(
-        [m for m in state.get("milestones", []) if m.get("title")],
-        key=lambda m: int(m.get("at") or 0),
+        [m for m in state.get("milestones", []) if isinstance(m, dict) and m.get("title")],
+        key=lambda m: _ms(m.get("at")),
         reverse=True,
     )
 
@@ -306,6 +346,11 @@ def album_facts(state: dict, now_ms: int | None = None) -> dict:
         "count": len(photos),
         "span": span,
         "captions": [str(p.get("caption")) for p in photos[:5] if p.get("caption")],
+        "visuals": [
+            str(p.get("visualCaption"))[:60]
+            for p in photos[:5]
+            if str(p.get("visualCaption") or "").strip()
+        ],
         "milestones": [str(m.get("title")) for m in milestones[:3]],
     }
 
@@ -314,7 +359,7 @@ def _fallback_story(facts: dict) -> dict:
     name = facts["name"]
     if facts["count"] == 0:
         return {"title": "第一张还没来", "body": f"{name} 的相册还空着。等第一个瞬间落进来，这里就会开始讲故事。"}
-    captions = "、".join(facts["captions"][:3])
+    captions = "、".join((facts["captions"] or facts.get("visuals") or [])[:3])
     body = f"{name}的相册里已经收着 {facts['count']} 个瞬间"
     if facts["span"]:
         body += f"，从 {facts['span']}"
@@ -335,11 +380,20 @@ def build_story_prompt(facts: dict) -> str:
     ]
     if facts["captions"]:
         lines.append("照片标题：" + "、".join(facts["captions"]) + "。")
+    if facts.get("visuals"):
+        lines.append("照片画面：" + "；".join(facts["visuals"]) + "。")
+        lines.append(
+            "开头从其中一张照片的具体画面写起（衣物、光线、姿势或手），"
+            "至少写入一个看得见的细节，再自然带过时间与里程碑；"
+            "不要逐条复述，也不要编造画面里没有的东西。"
+        )
     if facts["milestones"]:
         lines.append("里程碑：" + "、".join(facts["milestones"]) + "。")
     lines.append(
-        '只输出 JSON，不要代码块：{"title":"12 字以内","body":"80 字以内，2 到 3 句"}'
+        '只输出 JSON，不要代码块：{"title":"12 字以内","body":"100 字以内，2 到 3 个完整短句"}'
     )
+    lines.append("正文用句号分成 2 到 3 句，不要用一串逗号代替句子；不要罗列数字和月龄。")
+    lines.append("标题要抓住这一册里最特别的一天或一个动作，不要用「成长足迹」这类通用词。")
     lines.append("只使用上面给出的事实，不要编造照片里没有的细节，也不要写宝宝做不到的动作；不要虚构衣物、对白或天气。")
     return "\n".join(lines)
 
@@ -360,7 +414,7 @@ def story(state: dict, now_ms: int | None = None) -> dict:
     cleaned = None
     if data:
         title = " ".join(str(data.get("title") or "").split())[:16]
-        body = " ".join(str(data.get("body") or "").split())[:120]
+        body = " ".join(str(data.get("body") or "").split())[:140]
         if title and body:
             cleaned = {"title": title, "body": body}
 
