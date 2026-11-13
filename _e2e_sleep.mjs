@@ -185,11 +185,13 @@ await sleep(500)
 const rows = await evaluate(`[...document.querySelectorAll('.record')].map((r) => r.textContent.replace(/\\s+/g, ' ').trim())`)
 check('45m record appears on growth', rows.some((t) => t.includes('45m') && t.includes('10:20')), JSON.stringify(rows.slice(0, 3)))
 
-// 3) overnight yesterday 22:00 -> today 06:00 = 8h, dates explicit
+// 3) overnight 22:00 -> 06:00 = 8h, dates explicit
+// 用「前天 22:00 → 昨天 06:00」而不是「昨天 → 今天」，否则在凌晨（今天 06:00 还没到）会被
+// 「结束时间晚于现在」拦下，这条用例就会随运行时刻时好时坏。
 await openSleep()
-await setField('.sheet input[type=date]', 0, iso(-1))
+await setField('.sheet input[type=date]', 0, iso(-2))
 await setField('.sheet input[type=time]', 0, '22:00')
-await setField('.sheet input[type=date]', 1, iso(0))
+await setField('.sheet input[type=date]', 1, iso(-1))
 await setField('.sheet input[type=time]', 1, '06:00')
 await clickText('保存睡眠记录')
 await sleep(700)

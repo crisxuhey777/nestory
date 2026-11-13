@@ -20,16 +20,16 @@ function Shell() {
 
   if (state.onboarded === false) {
     return (
-      <div className="app app--onboarding">
+      <main className="app app--onboarding">
         <Onboarding />
         <Toasts />
-      </div>
+      </main>
     )
   }
 
   return (
     <div className="app">
-      <div
+      <main
         className={`route-view${mode === 'back' ? ' route-view--back' : ''}`}
         key={viewKey}
       >
@@ -43,7 +43,7 @@ function Shell() {
         {route === 'reminders' ? <RemindersPage /> : null}
         {route === 'about' ? <AboutPage /> : null}
         {route === 'settings' ? <SettingsPage /> : null}
-      </div>
+      </main>
       {isTab ? <TabBar active={route} /> : null}
       <ExitGuard route={route} />
       <Toasts />

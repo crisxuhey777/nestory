@@ -498,13 +498,21 @@ export default function BabyProfilePage() {
                   拍一张
                 </button>
               </div>
-              <input ref={uploadRef} className="sr-only" type="file" accept="image/*" onChange={onAvatarFile} />
+              <input
+                ref={uploadRef}
+                className="sr-only"
+                type="file"
+                accept="image/*"
+                aria-label="选择头像图片"
+                onChange={onAvatarFile}
+              />
               <input
                 ref={cameraRef}
                 className="sr-only"
                 type="file"
                 accept="image/*"
                 capture="environment"
+                aria-label="拍摄头像"
                 onChange={onAvatarFile}
               />
               <p className="timer__hint" style={{ textAlign: 'left', marginTop: 8 }}>

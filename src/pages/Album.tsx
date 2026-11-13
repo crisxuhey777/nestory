@@ -967,6 +967,7 @@ export default function AlbumPage() {
         ref={photoRef}
         type="file"
         accept="image/*,video/*,.mov"
+        aria-label="从相册选择照片或视频"
         className="sr-only"
         onChange={(e) => onPick(e.target.files?.[0], 'photo', e.target)}
       />
@@ -975,6 +976,7 @@ export default function AlbumPage() {
         type="file"
         accept="image/*"
         capture="environment"
+        aria-label="拍照"
         className="sr-only"
         onChange={(e) => onPick(e.target.files?.[0], 'photo', e.target)}
       />
@@ -982,6 +984,7 @@ export default function AlbumPage() {
         ref={videoRef}
         type="file"
         accept="video/*"
+        aria-label="从相册选择视频"
         className="sr-only"
         onChange={(e) => onPick(e.target.files?.[0], 'video', e.target)}
       />
@@ -990,6 +993,7 @@ export default function AlbumPage() {
         type="file"
         accept="video/*"
         capture="environment"
+        aria-label="拍视频"
         className="sr-only"
         onChange={(e) => onPick(e.target.files?.[0], 'video', e.target)}
       />

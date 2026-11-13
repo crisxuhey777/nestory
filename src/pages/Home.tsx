@@ -312,6 +312,17 @@ export default function HomePage() {
             if (next !== heroSlide) setHeroSlide(next)
           }}
           aria-label={heroSlides.length ? `宝宝照片，共 ${heroSlides.length} 张` : '宝宝照片'}
+          role="group"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+            event.preventDefault()
+            const step = event.key === 'ArrowRight' ? 1 : -1
+            const next = Math.max(0, Math.min(heroSlides.length - 1, heroSlide + step))
+            event.currentTarget.scrollTo({ left: next * event.currentTarget.clientWidth, behavior: 'smooth' })
+            setHeroSlide(next)
+            pausedUntil.current = Date.now() + HERO.pauseMs
+          }}
           onPointerDown={() => {
             pausedUntil.current = Date.now() + HERO.pauseMs
           }}
@@ -516,7 +527,7 @@ export default function HomePage() {
 
           {ai.status === 'done' ? (
             <>
-              <h3 className="ai-card__title">{ai.title}</h3>
+              <h2 className="ai-card__title">{ai.title}</h2>
               <p className="ai-card__note">{ai.note}</p>
               <div className="ai-card__foot">
                 <span className="ai-card__saved">
@@ -529,7 +540,7 @@ export default function HomePage() {
             </>
           ) : (
             <>
-              <h3 className="ai-card__title">让{state.baby.name}的一天，被记住</h3>
+              <h2 className="ai-card__title">让{state.baby.name}的一天，被记住</h2>
               <p className="ai-card__note">根据今天的喂养、睡眠和尿布，写一句温柔的小结，存进成长时间轴。</p>
               <button
                 type="button"

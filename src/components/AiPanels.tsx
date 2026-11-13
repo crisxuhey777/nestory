@@ -84,7 +84,7 @@ export function GrowthAiCard() {
 
       {phase === 'idle' ? (
         <>
-          <h3 className="ai-panel__title">这一周，宝宝在往哪儿长</h3>
+          <h2 className="ai-panel__title">这一周，宝宝在往哪儿长</h2>
           <p className="ai-panel__desc">
             把喂养、睡眠和体重的变化读成一句话，再给两条今天就能试的小建议。
           </p>
@@ -98,7 +98,7 @@ export function GrowthAiCard() {
 
       {phase === 'done' && analysis ? (
         <div className="ai-panel__result">
-          <h3 className="ai-panel__title">{analysis.headline}</h3>
+          <h2 className="ai-panel__title">{analysis.headline}</h2>
           <ul className="ai-points">
             {analysis.points.map((point) => (
               <li key={point.label} className="ai-point">
@@ -226,7 +226,7 @@ export function AlbumAiCard() {
 
       {phase === 'idle' ? (
         <>
-          <h3 className="ai-panel__title">把这一册，写成一段故事</h3>
+          <h2 className="ai-panel__title">把这一册，写成一段故事</h2>
           <p className="ai-panel__desc">
             写给未来的她，也写给现在的你。
           </p>
