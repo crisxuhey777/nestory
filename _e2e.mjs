@@ -123,30 +123,39 @@ check('首页显示 Nestory 品牌', brandName.includes('Nestory'), brandName)
 const beforeCount = Number((await text('.overview__cell')).split('次')[0])
 
 // ---------- 2. 两个入口进入不同界面 ----------
-await clickText('记录这次喂养')
+await clickText('喂养记录')
 await sleep(450)
-check('首页 CTA 进入快速记录', (await evaluate('location.hash')) === '#/record', await evaluate('location.hash'))
+check('首页 CTA 进入喂养记录', (await evaluate('location.hash')) === '#/feed', await evaluate('location.hash'))
+check('喂养记录显示统计与记录', (await evaluate(`!!document.querySelector('.stats-block')`)) === true, '')
 check(
-  '快速记录只保留记录表单',
-  (await evaluate(`!!document.querySelector('.quick-context')`)) === true &&
-    (await evaluate(`!document.querySelector('.stats-block')`)) === true &&
-    (await text('.screen-head__title')).includes('记录喂养'),
-  await text('.screen-head__title'),
-)
-await evaluate(`document.querySelector('.screen-head .icon-btn').click()`)
-await sleep(400)
-await clickText('喂奶', '.quick__item')
-await sleep(450)
-check('快捷喂奶进入喂养中心', (await evaluate('location.hash')) === '#/feed', await evaluate('location.hash'))
-check('喂养中心显示统计与记录', (await evaluate(`!!document.querySelector('.stats-block')`)) === true, '')
-check(
-  '喂养中心不显示喂养方式表单',
+  '喂养记录不显示喂养方式表单',
   (await evaluate(`!document.querySelector('.composer')`)) === true &&
     (await evaluate(`!document.querySelector('.save-bar')`)) === true,
   '',
 )
-check('喂养中心右上角没有铃铛', (await evaluate(`!document.querySelector('[aria-label="喂养提醒"]')`)) === true, '')
+check('喂养记录右上角没有铃铛', (await evaluate(`!document.querySelector('[aria-label="喂养提醒"]')`)) === true, '')
+await evaluate(`document.querySelector('.screen-head .icon-btn').click()`)
+await sleep(400)
+await clickText('喂奶', '.quick__item')
+await sleep(350)
+check('快捷喂奶停留在首页', (await evaluate('location.hash')) === '#/home', await evaluate('location.hash'))
+check('快捷喂奶打开底部面板', (await evaluate(`!!document.querySelector('.sheet')`)) === true, '')
+check('底部面板标题为记录喂养', (await text('.sheet__title')).includes('记录喂养'), await text('.sheet__title'))
+check(
+  '底部面板显示三种喂养方式',
+  (await evaluate(`document.querySelectorAll('.sheet .method').length`)) === 3,
+  '',
+)
 check('首页快捷喂奶与其他快捷项同色', (await evaluate(`document.querySelectorAll('.quick__circle--primary').length`)) === 0, '')
+await clickText('母乳亲喂')
+await clickText('开始计时')
+await sleep(900)
+await clickText('暂停计时')
+const sheetTimer = await text('.sheet .timer__digits')
+check('喂养面板亲喂计时会走动', sheetTimer !== '00:00:00', sheetTimer)
+await evaluate(`document.querySelector('.sheet-backdrop').click()`)
+await sleep(350)
+check('关闭喂养面板回到首页', (await evaluate(`!document.querySelector('.sheet')`)) === true, '')
 
 // ---------- 3. 快速记录表单 ----------
 await goto(BASE + '/#/record')
@@ -331,26 +340,27 @@ const expectedHome = beforeCount + 1
 const homeCount = Number((await text('.overview__cell')).split('次')[0])
 check('首页今日摘要与喂养页一致', homeCount === expectedHome, `${homeCount} / ${expectedHome}`)
 
-// ---------- 10. 快速记录保存后回到首页 ----------
-await clickText('记录这次喂养')
-await sleep(400)
-check('快速记录页可直接填写', (await evaluate(`!!document.querySelector('.quick-recent')`)) === true, '')
+// ---------- 10. 喂养面板保存后回到首页 ----------
+await clickText('喂奶', '.quick__item')
+await sleep(350)
+check('喂养面板可直接填写', (await evaluate(`!!document.querySelector('.sheet .methods')`)) === true, '')
 await clickText('配方奶')
 await sleep(250)
 await evaluate(`(() => {
-  const el = document.querySelector('.amount__input')
+  const el = document.querySelector('.sheet .amount__input')
   const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
   set.call(el, '88')
   el.dispatchEvent(new Event('input', { bubbles: true }))
 })()`)
 await sleep(220)
-const customFormula = await evaluate(`document.querySelector('.amount__input').value`)
+const customFormula = await evaluate(`document.querySelector('.sheet .amount__input').value`)
 check('配方奶奶量可自定义输入', customFormula === '88', customFormula)
 await clickText('保存这次喂养')
 await sleep(700)
-check('快速记录保存后回到首页', (await evaluate('location.hash')) === '#/home', await evaluate('location.hash'))
+check('喂养面板保存后回到首页', (await evaluate('location.hash')) === '#/home', await evaluate('location.hash'))
+check('保存后喂养面板关闭', (await evaluate(`!document.querySelector('.sheet')`)) === true, '')
 const quickHomeCount = Number((await text('.overview__cell')).split('次')[0])
-check('快速记录已计入首页', quickHomeCount === expectedHome + 1, `${quickHomeCount} / ${expectedHome + 1}`)
+check('喂养面板记录已计入首页', quickHomeCount === expectedHome + 1, `${quickHomeCount} / ${expectedHome + 1}`)
 
 // ---------- 11. 二级页返回首页 ----------
 await goto(BASE + '/#/feed')
