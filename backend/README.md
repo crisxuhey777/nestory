@@ -69,7 +69,7 @@ AI model
   provider : openai-compatible
   host     : open.bigmodel.cn
   model    : glm-4-flash
-  key      : ***5bt1
+  key      : ***xxxx
   config   : llm.env (3 active keys)
   probe    : ok via openai-compatible (875 ms)
 ```
