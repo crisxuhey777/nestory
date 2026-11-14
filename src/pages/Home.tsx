@@ -557,12 +557,7 @@ export default function HomePage() {
       </section>
 
       <section className="section" style={{ marginTop: 30 }}>
-        <SectionHead
-          title="最近的成长瞬间"
-          en="Recent moments"
-          action="全部照片"
-          onAction={() => navigate('album', 'home', false, { all: '1' })}
-        />
+        <SectionHead title="最近的成长瞬间" en="Recent moments" action="全部照片" onAction={() => navigate('album')} />
         {photos.length ? (
           <div className="strip">
             {photos.map((p) => (
@@ -585,12 +580,7 @@ export default function HomePage() {
       </section>
 
       <section className="section" style={{ marginTop: 30 }}>
-        <SectionHead
-          title="成长时间轴"
-          en="Milestones"
-          action="全部里程碑"
-          onAction={() => navigate('album', 'home', false, { story: '1' })}
-        />
+        <SectionHead title="成长时间轴" en="Milestones" action="完整记录" onAction={() => navigate('growth')} />
         <div className="story">
           {milestones.map((m) => (
             <div key={m.id} className="story__item">

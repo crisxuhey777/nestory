@@ -3,7 +3,7 @@ import { currentRoute, restoreRoute, TAB_ROUTES } from '../lib/route'
 import type { Route } from '../lib/route'
 import { Sheet } from './Sheet'
 
-type GuardState = { nestoryExitGuard?: boolean; nestoryNested?: boolean } | null
+type GuardState = { nestoryExitGuard?: boolean } | null
 
 /**
  * 主界面再按返回时，先弹一次确认，不直接退出应用。
@@ -24,8 +24,6 @@ export default function ExitGuard({ route }: { route: Route }) {
 
   const pushGuard = () => {
     const state = (history.state ?? {}) as GuardState & { nestoryExitGuardPath?: string }
-    // 由首页入口带参数进入的同一 Tab 页面是「临时根层」：返回应当回首页，不该弹退出确认。
-    if (state?.nestoryNested) return
     const path = window.location.hash || '#/home'
     if (state?.nestoryExitGuard && state.nestoryExitGuardPath === path) return
     history.pushState({ ...state, nestoryExitGuard: true, nestoryExitGuardPath: path }, '', window.location.href)
