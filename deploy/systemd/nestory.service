@@ -13,6 +13,8 @@ WorkingDirectory=/opt/nestory/backend
 Environment=PYTHONUNBUFFERED=1
 Environment=NESTORY_LOG_DIR=/var/log/nestory
 Environment=NESTORY_COOKIE_SECURE=1
+# 留空 = 关闭演示账号特权（仓库里的演示口令是公开的）
+Environment=NESTORY_DEMO_EMAIL=
 
 # --no-ai-probe：跳过启动时的模型探测，避免 systemd 启动被网络卡住
 ExecStart=/opt/nestory/venv/bin/python /opt/nestory/backend/server.py \

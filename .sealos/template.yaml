@@ -232,6 +232,9 @@ spec:
               value: nestory
             - name: NESTORY_COOKIE_SECURE
               value: '1'
+            # 留空 = 关闭演示账号特权；仓库里演示口令是公开的，公网部署必须关
+            - name: NESTORY_DEMO_EMAIL
+              value: ''
             - name: NESTORY_VERSION
               value: '0.3.6'
             - name: NESTORY_BACKUP_AT

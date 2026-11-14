@@ -30,6 +30,7 @@ users / sessions / user_state / media 四张表会自动建出来，不用手动
 | `NESTORY_DB_HOST` / `NESTORY_DB_PORT` | 托管 MySQL 地址 | Sealos 建 MySQL 集群后给的私网地址与端口 |
 | `NESTORY_DB_USER` / `NESTORY_DB_PASSWORD` / `NESTORY_DB_NAME` | 账号与库名 | 用该集群给的账号；库名一般是 `nestory` |
 | `NESTORY_COOKIE_SECURE` | 会话 Cookie 是否只走 HTTPS | **公网 HTTPS 必须设 `1`**（Sealos 默认给 https 域名） |
+| `NESTORY_DEMO_EMAIL` | 演示账号邮箱（默认 `demo@nestory.local`，口令写在仓库脚本里，公开） | **公网部署必须设成空字符串**，关闭演示特权；`deploy.yaml` / `template.yaml` 已内置 `''` |
 | `NESTORY_LLM_BASE` | AI 接口地址 | `https://open.bigmodel.cn/api/paas/v4/chat/completions` |
 | `NESTORY_LLM_MODEL` | 模型名 | `glm-4-flash` |
 | `NESTORY_LLM_KEY` | 智谱 API Key | 平台「环境变量 / Secret」里填，**别写进仓库** |
