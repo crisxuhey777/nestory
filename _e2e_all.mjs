@@ -23,7 +23,9 @@ const run = (file) =>
       out += chunk
     })
     child.on('close', (code) => {
-      const tail = out.trim().split('\n').slice(-3).join(' · ')
+      const lines = out.trim().split('\n')
+      const failedChecks = lines.filter((line) => line.includes('✗')).slice(0, 3)
+      const tail = (failedChecks.length ? failedChecks : lines.slice(-3)).join(' · ')
       resolve({ file, code, tail })
     })
   })

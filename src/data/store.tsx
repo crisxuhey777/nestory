@@ -335,6 +335,8 @@ function ReadyStore({
   const skipNextSave = useRef(false)
   /** 服务端那份 state 的版本号：保存时带 If-Match，别人先写过就 409。 */
   const revRef = useRef(session.rev)
+  // 冲突或重置后递增：已经在队列里的旧快照必须作废，别把旧内容盖回服务端。
+  const saveEpoch = useRef(0)
   /** reload 在 queueSave 之后定义，冲突时通过 ref 回调，避免依赖顺序。 */
   const reloadRef = useRef<() => Promise<void>>(async () => undefined)
 
@@ -390,10 +392,12 @@ function ReadyStore({
   /** 把最新快照排进串行链；返回的 Promise 不会 reject。 */
   const queueSave = useCallback(
     (snapshot: AppState, keepalive = false) => {
+      const epoch = saveEpoch.current
       saveChain.current = saveChain.current
         .catch(() => undefined)
-        .then(() => api.saveState(snapshot, keepalive, revRef.current))
+        .then(() => (epoch === saveEpoch.current ? api.saveState(snapshot, keepalive, revRef.current) : null))
         .then((rev) => {
+          if (rev === null) return
           revRef.current = rev
           clearRetry()
           retryAttempt.current = 0
@@ -408,6 +412,7 @@ function ReadyStore({
           }
           // 别人先写过这份状态：不要拿旧快照盖回去，载入最新内容让用户重做这一笔。
           if (error instanceof ApiError && error.status === 409 && error.code === 'state_conflict') {
+            saveEpoch.current += 1
             clearRetry()
             clearSaveError()
             dirty.current = false
@@ -512,6 +517,9 @@ function ReadyStore({
         return
       }
       if (action.type === 'reset') {
+        // 重置会整体替换状态：作废队列里的旧快照，别让它随后把旧内容写回去。
+        saveEpoch.current += 1
+        dirty.current = false
         void api
           .resetState()
           .then(({ state: fresh, rev }) => {

@@ -162,8 +162,12 @@ try {
   await sleep(1800)
   const conflictToasts = await evaluate(`[...document.querySelectorAll('.toast')].map(t => t.textContent).join('|')`)
   check('别人先写过时提示冲突', conflictToasts.includes('另一台设备'), conflictToasts)
-  await sleep(1200)
-  const settledValue = await evaluate(`document.querySelector('.interval-picker button.on')?.textContent || ''`)
+  let settledValue = ''
+  for (let i = 0; i < 20; i++) {
+    settledValue = await evaluate(`document.querySelector('.interval-picker button.on')?.textContent || ''`)
+    if (settledValue.startsWith('4')) break
+    await sleep(250)
+  }
   check('冲突后载入服务端最新值', settledValue.startsWith('4'), settledValue)
 
   // 还原成 3 小时，别把演示数据改坏
