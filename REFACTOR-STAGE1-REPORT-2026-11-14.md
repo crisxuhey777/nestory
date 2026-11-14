@@ -2,7 +2,7 @@
 
 - 日期：2026-11-14
 - 依据：`REFACTOR-PLAN-2026-11-14.md` 阶段一（1.1–1.4）
-- 提交：`d8056fb`（基线快照）→ `b444474`（1.1）→ `3416e9a`（1.2）→ `edc6877`（1.3）→ `df97201`（1.4）→ `36b43a1`（冲突/重置后作废排队旧快照 + e2e 报告改进）
+- 提交：`d8056fb`（基线快照）→ `b444474`（1.1）→ `3416e9a`（1.2）→ `edc6877`（1.3）→ `df97201`（1.4）→ `36b43a1`（冲突/重置后作废排队旧快照）→ `5658584`/`18fabc2`（报告与文档）→ `62809a1`（只读成员被拒不再当作「改动丢失」+ e2e 断言修正）
 - 分支：`main`（工作区干净；`shots/` 与 `.dsh-vision-router` 产物保持未跟踪）
 
 ## 1. 完成的任务
@@ -73,7 +73,7 @@ python -m unittest discover -s backend/tests -t backend              → 12 OK
 node node_modules/vite/bin/vite.js build                             → JS 444.58kB / gzip 135.34 · CSS 275.35kB / gzip 80.32
 node _e2e_autosave.mjs http://localhost:5178                         → 10/10（新后端 + dev server）
 node _e2e_home.mjs http://localhost:5178                             → 31/31（新增 AI 小结 3 条断言：标题、已加入时间轴、里程碑恰好 +1）
-node _e2e_all.mjs http://localhost:5178                              → 20/20 套 · 280.2s
+node _e2e_all.mjs http://localhost:5178                              → 20/20 套 · 277.9s（最终一轮，未同时改源码）
 ```
 
 后端冒烟（补丁后端 8017，测完保留进程，未动用户的 8000）：
@@ -87,7 +87,7 @@ node _e2e_all.mjs http://localhost:5178                              → 20/20 �
 ## 9. 未解决的问题
 
 1. ~~用户本机的 8000 后端仍是旧进程~~ **已在阶段收尾时重启**：停掉 PID 10576，用 `python server.py`（工作目录 `backend/`）起新进程（当前 PID 13548），启动时执行了 `household_state.rev` 迁移。验证：`/api/health` 已是收敛后的字段；`GET /api/state` 返回 `rev`；`POST /api/ai/summary` 返回 `milestone`（无 `state`）；`_e2e_autosave` 对 5178 跑 **10/10**（含冲突用例）。
-2. 之前 `_e2e_invite` 在全量跑里偶发 27/28：已定位为**我一边跑 e2e 一边改源码**，Vite 热更新把页面刷掉导致的假失败；不编辑代码重跑 20/20 全绿。这也说明 e2e 跑批期间不能再触发 HMR（已写进 README 的建议里）。
+2. `_e2e_invite` 在全量跑里偶发 27/28，根因不是 HMR，而是**只读成员被服务端 403 拒绝后仍被记成「改动可能没保存」**：该标记写进 `localStorage['nestory.unsaved']`，下一个会话启动时弹出提示，把「邀请链接已复制」的 toast 挤掉。已修两处：`store.tsx` 里 403 `read_only` 改为清标记 + 专用文案 + 不重试；`_e2e_invite` 改为等待「含复制二字的 toast」而不是「第一个 toast」。修后 invite 28/28、全量 20/20。
 3. 1.1 未按计划把 `UNSAVED_KEY` 升级成「待发快照」：现在标记只用于下次启动提示，跨会话丢失仍会发生（同一会话内的失败已由重试覆盖）。
 4. 与计划的偏差：409 错误码用 `state_conflict`（计划写 `stale_state`）；冲突后直接载入服务端版本，不做客户端并集合并。
 
