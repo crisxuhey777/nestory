@@ -11,7 +11,13 @@ deploy
 backend/logs
 backend/__pycache__
 backend/media
-backend/**.env
+# 密钥文件绝不能进镜像：Docker 的 `**` 只在「整段路径」位置生效，
+# `backend/**.env` 实际匹配不到 backend/llm.env，必须写成 `backend/*.env`。
+backend/*.env
+backend/**/*.env
+backend/*.log
+backend/_*.py
+backend/tests
 **/*.pyc
 
 # 大文件与文档

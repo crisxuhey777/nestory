@@ -4,6 +4,10 @@
 > 技术栈：Nginx（静态前端）+ Python 标准库 HTTP 服务（`backend/server.py`）+ MySQL 8。
 > 全部命令都在 **Ubuntu 22.04 / 24.04** 上验证过逻辑；Windows 侧命令直接复制到 PowerShell。
 
+> **想少折腾？** 这是手工版（自己装 Nginx / MySQL / systemd）。
+> 只想买台小 VPS、要自动 HTTPS 和一条命令升级，看 [`vps/README.md`](vps/README.md)：
+> `app + MySQL + Caddy` 三个容器，30 分钟上线，带备份与运维脚本。
+
 ## 0. 部署后的结构
 
 ```

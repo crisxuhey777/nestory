@@ -1,0 +1,24 @@
+# 一个站点，全走应用：/ 是前端 dist，/api/* 是 Python 后端。
+# 证书由 Caddy 自动申请、自动续期（Let's Encrypt），80 端口自动 301 到 443。
+{$DOMAIN} {
+	encode zstd gzip
+
+	# 照片/视频走「代理上传」模式时，请求体最大到 NESTORY_MEDIA_MAX_MB（默认 200MB）
+	request_body {
+		max_size 300MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	reverse_proxy app:8000
+
+	log {
+		output stdout
+		format console
+	}
+}

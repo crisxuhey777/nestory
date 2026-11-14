@@ -1,0 +1,100 @@
+# Nestory —— 一台小 VPS 上的完整部署（应用 + MySQL + 自动 HTTPS）。
+#
+#   cd /opt/nestory/deploy/vps
+#   cp .env.example .env && nano .env      # 填域名、数据库密码、LLM Key
+#   docker compose up -d --build           # 首次构建约 3-8 分钟
+#   docker compose ps                      # app / db / caddy 三个都是 healthy
+#
+# 数据都落在本目录的 ./data 下（不要 git clean，也不要把 data/ 提交进仓库）：
+#   data/mysql/   MySQL 数据文件
+#   data/media/   上传的照片 / 视频（本地存储驱动）+ 应用自带的 JSON 备份
+#   data/backup/  backup.sh 产出的 mysqldump 与媒体包
+#   data/caddy/   Let's Encrypt 证书（重建容器不会重新申请）
+#
+# 只有 caddy 暴露 80/443；app 和 db 只走 compose 内部网络。
+
+name: nestory
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 2C2G 小机器的内存预算：缓冲池 128M，关掉 performance_schema
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --max-connections=60
+      - --skip-name-resolve
+    environment:
+      MYSQL_DATABASE: ${NESTORY_DB_NAME:-nestory}
+      MYSQL_USER: ${NESTORY_DB_USER:-nestory}
+      MYSQL_PASSWORD: ${NESTORY_DB_PASSWORD:?在 .env 里设置 NESTORY_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?在 .env 里设置 MYSQL_ROOT_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: nestory:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # 容器里连服务名而不是 127.0.0.1；媒体目录挂到宿主机，重建容器不丢照片
+      NESTORY_DB_HOST: db
+      NESTORY_DB_PORT: "3306"
+      NESTORY_MEDIA_DIR: /data/media
+      NESTORY_DB_WAIT: "600"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data/media:/data/media
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=5).status == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?在 .env 里设置 DOMAIN，例如 nestory.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

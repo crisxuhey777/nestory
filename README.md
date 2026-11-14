@@ -25,6 +25,15 @@ Windows 下后端可以直接双击 `backend/start_server.bat` 启动，不必�
 
 > 开发服务器只监听 `localhost`（IPv6 回环）。若浏览器打不开，请使用 `http://localhost:5178` 而不是 `127.0.0.1`。
 
+## 部署上线
+
+给家人用不需要买贵的机器：一台 **2 核 2G 的小 VPS**（香港/新加坡免备案）+ Docker 就够，
+`app + MySQL + Caddy` 三个容器，Caddy 自动签 HTTPS，一年成本约 100～400 元。
+
+完整步骤（买机器 → 域名 → 启动 → 验收 → 邀请家人 → 备份 → 排错）见
+[deploy/vps/README.md](deploy/vps/README.md)；不用 Docker 的 Nginx + systemd 手工版见
+[deploy/README.md](deploy/README.md)。
+
 前端启动后先请求 `GET /api/auth/me`：没有登录就显示登录/注册页；登录成功后拿到的 `AppState`
 来自 MySQL，**拿到数据才渲染**。注册时填的昵称、宝宝昵称和生日会写进 `users`，之后每次打开、
 换浏览器只要登录就能取回，不用再填；页面上的每次改动会在 800ms 防抖后自动 `PUT /api/state`
@@ -328,7 +337,7 @@ src/
 ## 未完成事项
 
 1. **原生能力未接。** 仓库保留了产品结构，但尚未加入 Capacitor 工程与相册写入权限；震动已用 `navigator.vibrate` 轻反馈。「轻触反馈」目前只在保存记录时触发一次 8ms。
-2. **云同步只做了「同一台机器上的家庭共享」。** 注册、登录、家庭邀请与 household 级数据持久化已接通，但 MySQL 仍跑在本机：家庭成员需要在能访问这台机器的网络里打开页面；公网部署、限流、跨设备离线合并都还没做。邀请链接使用 7 天一次性 token，`backend/migrate_family.py` 负责把历史账号迁入默认家庭（迁移前自动备份）。
+2. **公网部署需要自备服务器。** 注册、登录、家庭邀请与 household 级数据持久化已接通，仓库为此提供了两套部署方案（[deploy/vps](deploy/vps/README.md) 容器版、[deploy/README.md](deploy/README.md) 手工版）；限流、跨设备离线合并还没做。邀请链接使用 7 天一次性 token，`backend/migrate_family.py` 负责把历史账号迁入默认家庭（迁移前自动备份）。
 3. **提醒依赖页面在前台或已安装的 PWA。** 现在到点会经 Service Worker 发系统通知，但浏览器完全退出（尤其未安装到主屏幕）时不会唤醒；真正的后台定时需要 Capacitor 本地通知或推送服务。
 4. **照片上传没有 EXIF 解析。** 拍摄时间取文件修改时间；压缩到最长边 1200 / JPEG 0.82。
 5. **会动的照片在网页端是「静态照片 + 短片」。** 浏览器拿不到 iOS Live Photo 的配对关系，也拆不开 Android Motion Photo 的内嵌视频，因此需要选择导出的短片；网页会截取首帧作为照片封面。视频可播放性取决于浏览器编解码（Chrome 不支持 HEVC）。
