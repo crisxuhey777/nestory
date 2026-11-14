@@ -280,6 +280,24 @@ await sleep(700)
 const restored = await evaluate(`document.querySelectorAll('.hero__slide').length`)
 check('恢复默认回到 4 张', restored === 4, String(restored))
 
+// AI 小结：只追加一条里程碑，不整份覆盖本地状态（回归 BIZ-05）
+const milestonesBefore = await evaluate(`fetch('/api/state').then((r) => r.json()).then((d) => d.state.milestones.length)`, true)
+await evaluate(`document.querySelector('.ai-card__cta')?.click()`)
+await sleep(9000)
+const summaryState = await evaluate(
+  `({
+    title: document.querySelector('.ai-card__title')?.textContent || '',
+    note: document.querySelector('.ai-card__note')?.textContent || '',
+    saved: !!document.querySelector('.ai-card__saved'),
+    milestones: null,
+  })`,
+  true,
+)
+const milestonesAfter = await evaluate(`fetch('/api/state').then((r) => r.json()).then((d) => d.state.milestones.length)`, true)
+check('AI 小结写出标题', summaryState.title.length >= 2, summaryState.title)
+check('AI 小结标记已加入时间轴', summaryState.saved, String(summaryState.saved))
+check('只多一条里程碑', milestonesAfter === milestonesBefore + 1, `${milestonesBefore} → ${milestonesAfter}`)
+
 const errors = await evaluate('window.__nestoryErrors ? window.__nestoryErrors.length : 0').catch(() => 0)
 check('页面无脚本崩溃', errors === 0 && runtimeErrors === 0, `${errors} / ${runtimeErrors}`)
 

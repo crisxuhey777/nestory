@@ -225,9 +225,13 @@ try {
   const token = typeof link === 'string' ? (link.split('t=')[1] ?? '') : ''
   check('邀请 token 是 32 位', /^[0-9a-f]{32}$/.test(token), token)
   check('复制按钮存在', await a.clickText('复制链接'), '')
-  await sleep(600)
+  // 复制反馈可能和启动时的其它提示同时存在，只看带「复制」的那条
+  const copyToast = await a.waitFor(
+    `Array.from(document.querySelectorAll('.toast')).some((el) => el.textContent.includes('复制'))`,
+    4000,
+  )
   const toastNow = await a.text('.toast')
-  check('复制后给出反馈', toastNow.includes('邀请链接已复制') || toastNow.includes('复制失败'), toastNow)
+  check('复制后给出反馈', !!copyToast && (toastNow.includes('邀请链接已复制') || toastNow.includes('复制失败')), toastNow)
 
   // ---------- B: 通过邀请链接加入 ----------
   await b.goto(`${BASE}/#/join?t=${token}`)

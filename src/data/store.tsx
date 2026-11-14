@@ -420,6 +420,14 @@ function ReadyStore({
             void reloadRef.current()
             return
           }
+          // 只读成员：服务端会一直拒绝，重试和「可能没保存」标记都没有意义。
+          if (error instanceof ApiError && error.status === 403 && error.code === 'read_only') {
+            clearRetry()
+            clearSaveError()
+            dirty.current = false
+            toast('这个账号是只读成员，改动没有保存')
+            return
+          }
           const now = Date.now()
           if (now - lastSaveError.current >= 8000) {
             lastSaveError.current = now

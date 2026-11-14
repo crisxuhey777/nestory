@@ -71,7 +71,8 @@ node node_modules/eslint/bin/eslint.js src _test                     → 0
 node node_modules/vitest/vitest.mjs run                              → 12 文件 58 用例通过
 python -m unittest discover -s backend/tests -t backend              → 12 OK
 node node_modules/vite/bin/vite.js build                             → JS 444.58kB / gzip 135.34 · CSS 275.35kB / gzip 80.32
-node _e2e_autosave.mjs http://127.0.0.1:8017                         → 10/10
+node _e2e_autosave.mjs http://localhost:5178                         → 10/10（新后端 + dev server）
+node _e2e_home.mjs http://localhost:5178                             → 31/31（新增 AI 小结 3 条断言：标题、已加入时间轴、里程碑恰好 +1）
 node _e2e_all.mjs http://localhost:5178                              → 20/20 套 · 280.2s
 ```
 
@@ -94,9 +95,9 @@ node _e2e_all.mjs http://localhost:5178                              → 20/20 �
 
 | 风险 | 说明 | 缓解 |
 | --- | --- | --- |
-| 部署顺序 | 新前端 + 旧后端时 AI 小结不可用 | 先后端、后前端（README 已有提醒）；后端未升级时前端会在 120s 后提示失败 |
+| 部署顺序 | 新前端 + 旧后端时 AI 小结不可用 | 已按「先后端、后前端」顺序重启 8000；后端未升级时前端会提示「生成失败」 |
 | 冲突策略 | 409 后丢失「冲突方这一次编辑」 | 计划即如此；提示语明确说「正在载入最新内容」，后续可评估并集合并 |
-| `rev` 列 | 旧代码不维护 `rev`，重启后从当前值继续 | 旧客户端不传 `If-Match` 走无条件写，已验证兼容 |
+| `rev` 列 | 旧代码不维护 `rev`，重启后从当前值继续 | 旧客户端不传 `If-Match` 走无条件写，已验证兼容；DDL 只加列，回滚代码时列保留 |
 | 恢复请求数 | Live Photo 恢复从 1 个请求变 4 个 | 并发发出，失败降级不阻断；已有用例覆盖 |
 | 提醒/保存交互 | `online` 补发与 800ms 防抖可能同时触发 | `saveChain` 串行，`dirty` 为假时补发直接返回 |
 
@@ -105,7 +106,7 @@ node _e2e_all.mjs http://localhost:5178                              → 20/20 �
 | 验收项 | 结果 |
 | --- | --- |
 | 项目可构建 | ✅ tsc 0 / build 成功 |
-| 测试通过 | ✅ 前端 58 + 后端 12 + e2e 20/20 + autosave 10/10（8017） |
+| 测试通过 | ✅ 前端 58 + 后端 12 + e2e 20/20 + home 31/31 + autosave 10/10（5178 新后端） |
 | 业务逻辑未经批准的变化 | 无；仅修 4 个缺陷，冲突与恢复语义按计划 |
 | 无新错误 | ✅ eslint 0、无 console.error 新增 |
 | 数据兼容 | ✅ 只加列不加约束；旧客户端与旧备份兼容 |
