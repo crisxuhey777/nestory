@@ -43,6 +43,7 @@ import accounts  # noqa: E402
 import ai_insights  # noqa: E402
 import auth  # noqa: E402
 import db  # noqa: E402
+import family  # noqa: E402
 import fixtures  # noqa: E402
 import llm  # noqa: E402
 import logsetup  # noqa: E402
@@ -262,6 +263,13 @@ class Handler(BaseHTTPRequestHandler):
                         "GET /api/state",
                         "PUT /api/state",
                         "POST /api/state/reset",
+                        "GET /api/family",
+                        "POST /api/family/invite",
+                        "GET /api/family/invite/{token}",
+                        "POST /api/family/join",
+                        "POST /api/family/member/update",
+                        "POST /api/family/member/remove",
+                        "POST /api/me/avatar",
                         "POST /api/ai/summary",
                         "POST /api/ai/analysis",
                         "POST /api/ai/story",
@@ -322,6 +330,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             user, state = got
             self._ok({"source": "mysql", "state": state, "user": user})
+            return
+
+        if path == "/api/family":
+            user = self._media_user()
+            if user is None:
+                return
+            try:
+                with family.connect() as conn:
+                    payload = family.payload(conn, user)
+            except accounts.ApiError as exc:
+                self._fail(exc)
+                return
+            self._ok(payload)
+            return
+
+        if path.startswith("/api/family/invite/"):
+            token = path.rsplit("/", 1)[-1]
+            try:
+                with family.connect() as conn:
+                    preview = family.preview(conn, token)
+            except accounts.ApiError as exc:
+                self._fail(exc)
+                return
+            self._ok(preview)
             return
 
         if path == "/api/test-config":
@@ -632,6 +664,11 @@ class Handler(BaseHTTPRequestHandler):
             self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}"})
             return
 
+        if path in ("/api/family/invite", "/api/family/join", "/api/family/member/update",
+                    "/api/family/member/remove", "/api/me/avatar"):
+            self._family_post(path)
+            return
+
         if path == "/api/ai/caption":
             self._ai_caption()
             return
@@ -756,6 +793,42 @@ class Handler(BaseHTTPRequestHandler):
             self._fail(exc)
             return
         self._ok({"source": "mysql", **result})
+
+    # ------------------------------------------------------------ 家庭与邀请
+
+    def _family_post(self, path: str) -> None:
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            data = self._read_json(allow_empty=True)
+        except ValueError as exc:
+            self._error(400, "bad_request", str(exc))
+            return
+        try:
+            with family.connect() as conn:
+                if path == "/api/family/invite":
+                    payload = family.create_invite(conn, user, str(data.get("permission") or "edit"))
+                elif path == "/api/family/join":
+                    payload = family.join(conn, user, str(data.get("token") or ""))
+                elif path == "/api/family/member/update":
+                    payload = family.update_member(
+                        conn,
+                        user["id"],
+                        int(data.get("userId") or 0),
+                        str(data.get("permission") or ""),
+                    )
+                elif path == "/api/family/member/remove":
+                    payload = family.remove_member(conn, user["id"], int(data.get("userId") or 0))
+                else:
+                    payload = family.set_avatar(conn, user, str(data.get("mediaId") or ""))
+        except (TypeError, ValueError):
+            self._error(400, "bad_request", "userId / mediaId 格式不对")
+            return
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        self._ok(payload)
 
     # ------------------------------------------------------------ AI
 

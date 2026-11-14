@@ -23,6 +23,7 @@ import pymysql
 
 import auth
 import db
+import family
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD = 8
@@ -179,12 +180,14 @@ def _empty_state(baby_name: str = "", birthday: str = "") -> dict:
 
 def _public_user(row: dict) -> dict:
     birthday = row.get("baby_birthday")
+    avatar = row.get("avatar_media_id")
     return {
         "id": row["id"],
         "email": row["email"],
         "nickname": row["nickname"],
         "babyName": row["baby_name"],
         "babyBirthday": birthday.isoformat() if birthday else None,
+        "avatarUrl": f"/api/media/blob/{avatar}" if avatar else None,
         "isDemo": row["email"] == "demo@nestory.local",
         "createdAt": row["created_at"].isoformat(timespec="seconds")
         if row.get("created_at")
@@ -209,19 +212,18 @@ def _create_session(conn, user_id: int) -> str:
     return token
 
 
-def _save_state(conn, user_id: int, state: dict, baby_name: str, birthday: date | None) -> None:
-    payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+def _save_state(conn, user: dict, state: dict, baby_name: str, birthday: date | None) -> None:
+    """写家庭共享状态，并把宝宝档案同步到个人账号上。
+
+    ``state.family`` 由数据库推导，不落库；否则家庭成员一变动就会有两份不一致的副本。
+    """
+    family.strip(state)
+    household = family.ensure(conn, user)
+    family.save_state(conn, household["id"], state)
     with conn.cursor() as cur:
         cur.execute(
-            """
-            INSERT INTO user_state (user_id, state_json) VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE state_json = VALUES(state_json)
-            """,
-            (user_id, payload),
-        )
-        cur.execute(
             "UPDATE users SET baby_name = %s, baby_birthday = %s WHERE id = %s",
-            (baby_name, birthday, user_id),
+            (baby_name, birthday, user["id"]),
         )
 
 
@@ -259,15 +261,14 @@ def _normalize_demo_photos(state: dict) -> bool:
 
 
 def _load_state(conn, row: dict) -> dict:
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_json FROM user_state WHERE user_id = %s", (row["id"],))
-        saved = cur.fetchone()
+    household = family.ensure(conn, row)
+    saved = family.state_row(conn, household["id"])
     if saved:
         state = None
         try:
             loaded = json.loads(saved["state_json"])
         except json.JSONDecodeError as exc:
-            log.warning("state json broken user=%s: %s", row["id"], exc)
+            log.warning("state json broken household=%s: %s", household["id"], exc)
             loaded = None
         if isinstance(loaded, dict) and loaded.get("version") == 3:
             state = loaded
@@ -279,7 +280,7 @@ def _load_state(conn, row: dict) -> dict:
                     baby["birthday"] = _ms_to_date(int(raw)).isoformat()
                     _save_state(
                         conn,
-                        row["id"],
+                        row,
                         state,
                         (state.get("baby") or {}).get("name") or row.get("baby_name") or "",
                         _day_from_state(state.get("baby") or {}) or row.get("baby_birthday"),
@@ -291,8 +292,8 @@ def _load_state(conn, row: dict) -> dict:
                     state = None
         elif loaded is not None:
             log.warning(
-                "state version mismatch user=%s: %r; rebuilding",
-                row["id"],
+                "state version mismatch household=%s: %r; rebuilding",
+                household["id"],
                 loaded.get("version") if isinstance(loaded, dict) else type(loaded).__name__,
             )
         if state is not None:
@@ -301,13 +302,13 @@ def _load_state(conn, row: dict) -> dict:
             if normalized or archived:
                 _save_state(
                     conn,
-                    row["id"],
+                    row,
                     state,
                     (state.get("baby") or {}).get("name") or row.get("baby_name") or "",
                     _day_from_state(state.get("baby") or {}) or row.get("baby_birthday"),
                 )
                 log.info("normalized demo photo / pre-birth records user=%s", row["id"])
-            return state
+            return family.attach(conn, row, state)
 
     # 老账号或数据损坏：建一份空状态，不再注入演示数据
     birthday = row.get("baby_birthday")
@@ -315,8 +316,8 @@ def _load_state(conn, row: dict) -> dict:
         row.get("baby_name") or "",
         birthday.isoformat() if birthday else "",
     )
-    _save_state(conn, row["id"], state, row.get("baby_name") or "", birthday)
-    return state
+    _save_state(conn, row, state, row.get("baby_name") or "", birthday)
+    return family.attach(conn, row, state)
 
 
 def _user_row_by_email(conn, email: str) -> dict | None:
@@ -368,11 +369,13 @@ def register(data: dict) -> tuple[dict, dict, str]:
                     (email, auth.hash_password(password), nickname, "", None),
                 )
                 user_id = cur.lastrowid
-            _save_state(conn, user_id, state, "", None)
-            token = _create_session(conn, user_id)
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 row = cur.fetchone()
+            # 建档同时建家庭：注册完就是自己家的 admin
+            _save_state(conn, row, state, "", None)
+            state = family.attach(conn, row, state)
+            token = _create_session(conn, user_id)
     except pymysql.err.IntegrityError as exc:
         # 两个请求同时注册同一邮箱：唯一键会替我们裁决
         if exc.args and exc.args[0] == 1062:
@@ -447,6 +450,9 @@ def save_state(token: str | None, state: dict) -> dict:
         row = _user_row_by_token(conn, token)
         if not row:
             raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
+        household, permission = family.permission_of(conn, row["id"])
+        if family.RANK.get(permission, 0) < family.RANK["edit"]:
+            raise ApiError(403, "read_only", "这个账号是只读成员，不能修改记录")
         # 客户端漏字段时不要把已有档案清空：沿用库里保存的昵称和生日。
         if not baby_name and row.get("baby_name"):
             baby_name = row["baby_name"]
@@ -455,7 +461,8 @@ def save_state(token: str | None, state: dict) -> dict:
         baby["name"] = baby_name
         baby["birthday"] = birthday.isoformat() if birthday else ""
         _archive_prebirth(state)
-        _save_state(conn, row["id"], state, baby_name, birthday)
+        _save_state(conn, row, state, baby_name, birthday)
+        state = family.attach(conn, row, state)
     size = len(json.dumps(state, ensure_ascii=False, separators=(",", ":")))
     log.info(
         "state saved user=%s bytes=%d feeds=%d sleeps=%d photos=%d",
@@ -488,6 +495,7 @@ def reset_state(token: str | None) -> dict:
                 row.get("baby_name") or "",
                 birthday.isoformat() if birthday else "",
             )
-        _save_state(conn, row["id"], state, row.get("baby_name") or "", birthday)
+        _save_state(conn, row, state, row.get("baby_name") or "", birthday)
+        state = family.attach(conn, row, state)
     log.info("state reset user=%s", row["id"])
     return {"ok": True, "state": state}

@@ -117,7 +117,7 @@ export const MEDIA_GROUPS: readonly {
 }[]
 
 export const PROFILE_MENU: readonly {
-  key: 'settings' | 'reminders' | 'share' | 'privacy' | 'about'
+  key: 'settings' | 'reminders' | 'privacy' | 'about'
   icon: IconName
   title: string
   sub: string

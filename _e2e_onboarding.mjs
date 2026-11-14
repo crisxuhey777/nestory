@@ -156,7 +156,12 @@ try {
 
   await goto('#/profile')
   check('空资料落在我的页', (await evaluate(`document.querySelector('.profile-hero__name')?.textContent.trim()`)) === '还没有宝宝资料', await evaluate(`document.querySelector('.profile-hero__name')?.textContent`))
-  check('空家庭没有成员', (await evaluate(`document.querySelectorAll('.family__avatar').length`)) === 0)
+  check(
+    '新账号家庭只有自己',
+    (await evaluate(`document.querySelectorAll('.family__avatar').length`)) === 1 &&
+      (await evaluate(`document.querySelector('.family__name')?.textContent.trim()`)) === '跳过测试',
+    `avatars=${await evaluate(`document.querySelectorAll('.family__avatar').length`)} name=${await evaluate(`document.querySelector('.family__name')?.textContent.trim()`)}`,
+  )
   const shotProfile = await send('Page.captureScreenshot', { format: 'png' })
   writeFileSync('shots/onboarding-empty-profile.png', Buffer.from(shotProfile.data, 'base64'))
 

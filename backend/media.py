@@ -16,6 +16,7 @@ import time
 
 import accounts
 import db
+import family
 import storage
 
 log = logging.getLogger("nestory.media")
@@ -28,17 +29,28 @@ def _conn():
     return db.connect()
 
 
+def _household(conn, user: dict) -> dict:
+    """媒体按家庭共享：同一家的成员都能看彼此上传的照片。"""
+    row = family.household_for(conn, user["id"])
+    if not row:
+        raise accounts.ApiError(403, "no_household", "还没有加入任何家庭")
+    return row
+
+
 def usage(user_id: int) -> dict:
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT COUNT(*) AS items, COALESCE(SUM(bytes), 0) AS bytes
-            FROM media
-            WHERE user_id = %s AND deleted_at IS NULL
-            """,
-            (user_id,),
-        )
-        row = cur.fetchone() or {}
+    with _conn() as conn:
+        household = _household(conn, {"id": user_id})
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS items, COALESCE(SUM(bytes), 0) AS bytes
+                FROM media
+                WHERE (household_id = %s OR (household_id IS NULL AND user_id = %s))
+                  AND deleted_at IS NULL
+                """,
+                (household["id"], user_id),
+            )
+            row = cur.fetchone() or {}
     return {
         "items": int(row.get("items") or 0),
         "bytes": int(row.get("bytes") or 0),
@@ -112,26 +124,29 @@ def presign(user: dict, payload: dict) -> dict:
 
     media_id = secrets.token_hex(16)
     key = storage.object_key(user["id"], media_id, mime)
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO media (id, user_id, kind, object_key, mime, bytes,
-                               width, height, duration_sec, sha256, state)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
-            """,
-            (
-                media_id,
-                user["id"],
-                kind,
-                key,
-                mime,
-                size,
-                _int(payload.get("width"), 20000),
-                _int(payload.get("height"), 20000),
-                _float(payload.get("durationSec"), 86400),
-                sha or None,
-            ),
-        )
+    with _conn() as conn:
+        household_id = _household(conn, user)["id"]
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO media (id, user_id, household_id, kind, object_key, mime, bytes,
+                                   width, height, duration_sec, sha256, state)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                """,
+                (
+                    media_id,
+                    user["id"],
+                    household_id,
+                    kind,
+                    key,
+                    mime,
+                    size,
+                    _int(payload.get("width"), 20000),
+                    _int(payload.get("height"), 20000),
+                    _float(payload.get("durationSec"), 86400),
+                    sha or None,
+                ),
+            )
 
     url = f"/api/media/blob/{media_id}"
     if storage.driver() == "s3" and not payload.get("proxy"):
@@ -148,47 +163,62 @@ def presign(user: dict, payload: dict) -> dict:
 
 
 def confirm(user: dict, media_id: str, size: int) -> dict:
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM media WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-            (media_id, user["id"]),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise accounts.ApiError(404, "not_found", "媒体不存在")
-        cur.execute(
-            "UPDATE media SET state = 'ready', bytes = %s WHERE id = %s",
-            (size or row["bytes"], media_id),
-        )
+    with _conn() as conn:
+        household = _household(conn, user)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM media
+                WHERE id = %s AND deleted_at IS NULL
+                  AND (household_id = %s OR (household_id IS NULL AND user_id = %s))
+                """,
+                (media_id, household["id"], user["id"]),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise accounts.ApiError(404, "not_found", "媒体不存在")
+            cur.execute(
+                "UPDATE media SET state = 'ready', bytes = %s WHERE id = %s",
+                (size or row["bytes"], media_id),
+            )
     log.info("media ready id=%s user=%s bytes=%s", media_id, user["id"], size)
     return {"id": media_id, "url": f"/api/media/blob/{media_id}"}
 
 
 def row_for(user: dict, media_id: str) -> dict:
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM media WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
-            (media_id, user["id"]),
-        )
-        row = cur.fetchone()
+    with _conn() as conn:
+        household = _household(conn, user)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM media
+                WHERE id = %s AND deleted_at IS NULL
+                  AND (household_id = %s OR (household_id IS NULL AND user_id = %s))
+                """,
+                (media_id, household["id"], user["id"]),
+            )
+            row = cur.fetchone()
     if not row:
         raise accounts.ApiError(404, "not_found", "媒体不存在")
     return row
 
 
 def listing(user: dict) -> dict:
-    with _conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT id, kind, bytes, mime, width, height, duration_sec, created_at
-            FROM media
-            WHERE user_id = %s AND deleted_at IS NULL AND state = 'ready'
-            ORDER BY created_at DESC
-            LIMIT 500
-            """,
-            (user["id"],),
-        )
-        rows = cur.fetchall() or []
+    with _conn() as conn:
+        household = _household(conn, user)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, kind, bytes, mime, width, height, duration_sec, created_at
+                FROM media
+                WHERE (household_id = %s OR (household_id IS NULL AND user_id = %s))
+                  AND deleted_at IS NULL AND state = 'ready'
+                ORDER BY created_at DESC
+                LIMIT 500
+                """,
+                (household["id"], user["id"]),
+            )
+            rows = cur.fetchall() or []
     return {
         "items": [
             {
@@ -214,8 +244,7 @@ def remove(user: dict, media_id: str) -> dict:
     row = row_for(user, media_id)
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE media SET deleted_at = %s WHERE id = %s AND user_id = %s",
-            (time.strftime("%Y-%m-%d %H:%M:%S"), media_id, user["id"]),
+            "UPDATE media SET deleted_at = %s WHERE id = %s", (time.strftime("%Y-%m-%d %H:%M:%S"), media_id)
         )
     try:
         storage.delete(row["object_key"])

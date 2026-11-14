@@ -3,7 +3,7 @@ import { ONBOARDING } from '../data/config'
 import { uid, useStore } from '../data/store'
 import { api } from '../data/api'
 import type { AppState } from '../data/types'
-import { compressImage } from '../lib/media'
+import { compressImage, uploadAvatar } from '../lib/media'
 import { toISODate } from '../lib/date'
 import { navigate } from '../lib/route'
 import { Icon } from '../brand/icons'
@@ -20,8 +20,11 @@ export default function Onboarding() {
   const [interval, setIntervalMinutes] = useState(180)
   const [remind, setRemind] = useState(true)
   const [photo, setPhoto] = useState<string | null>(null)
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [avatarPreview, setAvatarPreview] = useState('')
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const avatarRef = useRef<HTMLInputElement>(null)
 
   const today = toISODate(Date.now())
   const stepDef = step >= 0 ? ONBOARDING.steps[step] : null
@@ -30,6 +33,14 @@ export default function Onboarding() {
   const finish = async (skip = false) => {
     if (busy) return
     setBusy(true)
+    let avatarUrl = ''
+    if (!skip && avatarFile) {
+      try {
+        avatarUrl = await uploadAvatar(avatarFile)
+      } catch {
+        toast('头像没能上传，之后可以在「我的」里再设置')
+      }
+    }
     let patch: Partial<AppState> = {}
     if (!skip) {
       const now = Date.now()
@@ -45,17 +56,6 @@ export default function Onboarding() {
               kind: 'photo' as const,
             }
           : null
-      const family = state.family.length
-        ? state.family
-        : [
-            {
-              id: 'u1',
-              name: user.nickname || '家庭管理员',
-              role: '家庭管理员',
-              color: '#B8C3B1',
-              permission: 'admin' as const,
-            },
-          ]
       patch = {
         baby: {
           ...state.baby,
@@ -70,8 +70,6 @@ export default function Onboarding() {
         },
         photos: nextPhoto ? [nextPhoto, ...state.photos] : state.photos,
         heroPhotoIds: nextPhoto ? [nextPhoto.id] : state.heroPhotoIds,
-        family,
-        viewerId: state.viewerId || family[0]?.id || '',
       }
     }
 
@@ -84,6 +82,9 @@ export default function Onboarding() {
       return
     }
     dispatch({ type: 'completeOnboarding', patch })
+    if (avatarUrl) {
+      dispatch({ type: 'updateFamilyMember', id: state.viewerId, patch: { avatarUrl } })
+    }
     navigate('home', undefined, true)
   }
 
@@ -97,6 +98,13 @@ export default function Onboarding() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const pickAvatar = (file: File | undefined) => {
+    if (!file) return
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview)
+    setAvatarFile(file)
+    setAvatarPreview(URL.createObjectURL(file))
   }
 
   return (
@@ -158,6 +166,28 @@ export default function Onboarding() {
 
             {step === 0 ? (
               <div className="onboarding__form">
+                <div className="onboarding__avatar">
+                  <input
+                    ref={avatarRef}
+                    className="sr-only"
+                    type="file"
+                    accept="image/*"
+                    aria-label="选择你的头像"
+                    onChange={(event) => pickAvatar(event.target.files?.[0])}
+                  />
+                  <button
+                    className="onboarding__avatar-btn"
+                    type="button"
+                    onClick={() => avatarRef.current?.click()}
+                  >
+                    {avatarPreview ? (
+                      <img src={avatarPreview} alt="你的头像预览" />
+                    ) : (
+                      <Icon name="camera" size={20} />
+                    )}
+                  </button>
+                  <span className="onboarding__avatar-label">你的头像 · 可跳过</span>
+                </div>
                 <label className="field">
                   <span className="field__label">宝宝昵称</span>
                   <input

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MEDIA_LIMITS, STORAGE_KEYS } from '../data/config'
 import type { MediaKind, MediaPresignInput } from '../data/api'
-import { ApiError, mediaApi } from '../data/api'
+import { ApiError, api, mediaApi } from '../data/api'
 
 type Encoded = { blob: Blob; width: number; height: number }
 
@@ -115,6 +115,14 @@ export async function uploadMedia(
     await mediaApi.confirm(presign.id)
   }
   return { id: presign.id, url: presign.url }
+}
+
+/** 账号头像：512px 方图，上传后把 media id 设为当前账号头像。 */
+export async function uploadAvatar(file: File): Promise<string> {
+  const { blob, width, height } = await compressToBlob(file, 512, 0.86)
+  const uploaded = await uploadMedia(blob, 'photo', { width, height })
+  const { avatarUrl } = await api.setAvatar(uploaded.id)
+  return avatarUrl
 }
 
 /** 照片：原图（长边 1200）+ 缩略图（长边 480），两张分别上传。 */

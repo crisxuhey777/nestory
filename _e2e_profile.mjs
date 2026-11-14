@@ -1,4 +1,5 @@
 import { seedSession } from './_login_session.mjs'
+import { seedDemoMember } from './_seed_family.mjs'
 // Profile / About regression: edit baby, remove family member, back navigation.
 // usage: node _e2e_profile.mjs [baseUrl]
 import { spawn } from 'node:child_process'
@@ -257,6 +258,10 @@ await back()
 await sleep(450)
 
 // ---------- profile: remove family member ----------
+// 家庭成员现在是真实账号：先邀请一个家人进来，再验证移出流程
+await seedDemoMember(BASE, '爸爸')
+await goto(`${BASE}/?seed=1#/profile`)
+await sleep(1200)
 const before = await evaluate(`document.querySelectorAll('.family__avatar').length`)
 await clickText('爸爸', '.family__item')
 await sleep(400)

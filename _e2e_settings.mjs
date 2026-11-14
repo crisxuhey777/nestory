@@ -1,4 +1,5 @@
 import { seedSession } from './_login_session.mjs'
+import { seedDemoMember } from './_seed_family.mjs'
 // Settings / permissions / avatar regression.
 // usage: node _e2e_settings.mjs [baseUrl]
 import { spawn } from 'node:child_process'
@@ -142,7 +143,9 @@ await sleep(500)
 check('设置页返回我的家庭', (await evaluate('location.hash')) === '#/profile', await evaluate('location.hash'))
 
 // ---------- member permissions ----------
-await goto(BASE + '/#/profile')
+await seedDemoMember(BASE, '爸爸')
+await goto(BASE + '/?seed=1#/profile')
+await sleep(1200)
 await clickText('爸爸', '.family__item')
 await sleep(400)
 check('成员详情出现权限选项', (await evaluate(`document.querySelectorAll('.perm').length`)) === 3, '3 options')

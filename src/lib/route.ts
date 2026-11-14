@@ -11,6 +11,8 @@ export type Route =
   | 'reminders'
   | 'about'
   | 'settings'
+  | 'invite'
+  | 'join'
 
 const ROUTES: Route[] = [
   'home',
@@ -23,6 +25,8 @@ const ROUTES: Route[] = [
   'reminders',
   'about',
   'settings',
+  'invite',
+  'join',
 ]
 
 const TITLES: Record<Route, string> = {
@@ -36,6 +40,8 @@ const TITLES: Record<Route, string> = {
   reminders: '提醒中心 · Nestory',
   about: '关于 Nestory',
   settings: '设置 · Nestory',
+  invite: '邀请家人 · Nestory',
+  join: '加入家庭 · Nestory',
 }
 
 function parse(hash: string): Route {
@@ -123,6 +129,12 @@ export function getRouteFrom(): Route | null {
   const match = window.location.hash.match(/[?&]from=([a-z]+)/)
   const from = match?.[1]
   return from && (ROUTES as string[]).includes(from) ? (from as Route) : null
+}
+
+/** 读取 hash 里的查询参数（如邀请链接的 `?t=`）。 */
+export function getHashParam(name: string): string | null {
+  const match = window.location.hash.match(new RegExp(`[?&]${name}=([^&#]+)`))
+  return match ? decodeURIComponent(match[1]) : null
 }
 
 /** 系统返回被退出确认拦截后，取消时把地址恢复到用户原本所在的根页面。 */

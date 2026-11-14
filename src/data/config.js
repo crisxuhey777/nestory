@@ -161,7 +161,6 @@ export const PROFILE_MENU = [
     sub: '字体大小、存储空间与通知权限',
   },
   { key: 'reminders', icon: 'bell', title: '提醒中心', sub: '喂养间隔与夜间安静' },
-  { key: 'share', icon: 'family', title: '家庭共享', sub: '共同记录 · 权限可设置为只读' },
   { key: 'privacy', icon: 'shield', title: '隐私与安全', sub: '家庭成员可见 · 默认不公开' },
   { key: 'about', icon: 'leaf', title: '关于 Nestory', sub: '名字、信念，和这间小屋的由来' },
 ]

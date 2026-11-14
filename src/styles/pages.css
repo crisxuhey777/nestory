@@ -4342,3 +4342,87 @@
 .diaper-filter__item:active {
   transform: scale(0.98);
 }
+
+/* ---------- family invite & join ---------- */
+.family__avatar--img {
+  object-fit: cover;
+  background: var(--sage-tint);
+}
+
+.avatar-edit {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: calc(10.5px * var(--type-scale, 1));
+  color: var(--forest);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.invite-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.invite-actions .btn {
+  flex: 1;
+}
+
+.join-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--sage-tint);
+  color: var(--forest);
+}
+
+.join-title {
+  margin: 8px 0 10px;
+  font-family: var(--font-serif);
+  font-size: calc(22px * var(--type-scale, 1));
+  font-weight: 500;
+  color: var(--forest);
+}
+
+.join-perm {
+  margin: 4px 0 18px;
+  font-size: calc(11px * var(--type-scale, 1));
+  color: var(--ink-3);
+}
+
+.onboarding__avatar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.onboarding__avatar-btn {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  overflow: hidden;
+  border: 1px dashed var(--sage);
+  border-radius: 50%;
+  background: var(--sage-tint);
+  color: var(--forest);
+  cursor: pointer;
+}
+
+.onboarding__avatar-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.onboarding__avatar-label {
+  font-size: calc(11px * var(--type-scale, 1));
+  color: var(--ink-3);
+}
+

@@ -100,6 +100,8 @@ export type FamilyMember = {
   role: string
   color: string
   permission: 'admin' | 'edit' | 'read'
+  /** 账号级头像（媒体地址）；没设置时用 color + 首字兜底 */
+  avatarUrl?: string | null
 }
 
 export type ArchivedState = {

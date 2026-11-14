@@ -12,6 +12,8 @@ import BabyProfilePage from './pages/BabyProfile'
 import RemindersPage from './pages/Reminders'
 import AboutPage from './pages/About'
 import SettingsPage from './pages/Settings'
+import InvitePage from './pages/Invite'
+import JoinPage from './pages/Join'
 
 function Shell() {
   const { route, mode, viewKey } = useRoute()
@@ -43,6 +45,8 @@ function Shell() {
         {route === 'reminders' ? <RemindersPage /> : null}
         {route === 'about' ? <AboutPage /> : null}
         {route === 'settings' ? <SettingsPage /> : null}
+        {route === 'invite' ? <InvitePage /> : null}
+        {route === 'join' ? <JoinPage /> : null}
       </main>
       {isTab ? <TabBar active={route} /> : null}
       <ExitGuard route={route} />

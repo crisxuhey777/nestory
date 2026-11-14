@@ -8,9 +8,38 @@ export type User = {
   babyBirthday: string | null
   isDemo?: boolean
   createdAt: string | null
+  avatarUrl?: string | null
 }
 
 export type Session = { user: User; state: AppState }
+
+export type Permission = 'admin' | 'edit' | 'read'
+
+export type FamilyMemberDto = {
+  id: string
+  name: string
+  role: string
+  color: string
+  permission: Permission
+  avatarUrl: string | null
+  joinedAt: string | null
+}
+
+export type FamilyPayload = {
+  household: { id: number; name: string; createdAt?: string | null }
+  me: { userId: string; permission: Permission; isAdmin: boolean }
+  members: FamilyMemberDto[]
+}
+
+export type InvitePayload = { token: string; permission: Permission; expiresAt: string; days: number }
+
+export type InvitePreview = {
+  status: 'ok' | 'used' | 'expired'
+  household: { id: number; name: string }
+  permission: Permission
+  inviter: string
+  expiresAt: string
+}
 
 export type MediaKind = 'photo' | 'video' | 'live'
 
@@ -192,6 +221,41 @@ export const api = {
     if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '数据加载失败，请刷新后再试')
     return payload.state
   },
+
+  family: (): Promise<FamilyPayload> => request<FamilyPayload>('/api/family'),
+
+  createInvite: (permission: Permission): Promise<InvitePayload> =>
+    request<InvitePayload>('/api/family/invite', {
+      method: 'POST',
+      body: JSON.stringify({ permission }),
+    }),
+
+  previewInvite: (token: string): Promise<InvitePreview> =>
+    request<InvitePreview>(`/api/family/invite/${encodeURIComponent(token)}`),
+
+  joinFamily: (token: string): Promise<FamilyPayload> =>
+    request<FamilyPayload>('/api/family/join', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+
+  updateMember: (userId: string, permission: Permission): Promise<{ ok: boolean; userId: string; permission: Permission }> =>
+    request<{ ok: boolean; userId: string; permission: Permission }>('/api/family/member/update', {
+      method: 'POST',
+      body: JSON.stringify({ userId, permission }),
+    }),
+
+  removeMember: (userId: string): Promise<{ ok: boolean; userId: string }> =>
+    request<{ ok: boolean; userId: string }>('/api/family/member/remove', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    }),
+
+  setAvatar: (mediaId: string): Promise<{ ok: boolean; avatarUrl: string }> =>
+    request<{ ok: boolean; avatarUrl: string }>('/api/me/avatar', {
+      method: 'POST',
+      body: JSON.stringify({ mediaId }),
+    }),
 }
 
 export const mediaApi = {

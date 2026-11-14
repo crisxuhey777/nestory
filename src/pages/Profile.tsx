@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Icon } from '../brand/icons'
 import { NestoryLogo } from '../brand/Logo'
 import { Sheet } from '../components/Sheet'
 import { useStore } from '../data/store'
+import { api } from '../data/api'
+import { uploadAvatar } from '../lib/media'
 import { ageBetween, ageLabel, fromISODate } from '../lib/date'
 import { navigate } from '../lib/route'
 import type { Route } from '../lib/route'
@@ -21,11 +23,12 @@ const PERMISSION_OPTIONS = PERMISSIONS.map((permission) => ({
 
 export default function ProfilePage() {
   const { state, dispatch, toast } = useStore()
-  const [share, setShare] = useState(false)
   const [privacy, setPrivacy] = useState(false)
   const [member, setMember] = useState<FamilyMember | null>(null)
   const [permError, setPermError] = useState('')
   const [removing, setRemoving] = useState<FamilyMember | null>(null)
+  const [avatarBusy, setAvatarBusy] = useState(false)
+  const avatarRef = useRef<HTMLInputElement>(null)
 
   const now = Date.now()
   const hasBirth = /^\d{4}-\d{2}-\d{2}$/.test(state.baby.birthday)
@@ -40,7 +43,7 @@ export default function ProfilePage() {
     state.baby.birthHeightCm > 0 ? `${state.baby.birthHeightCm} cm` : '',
   ].filter(Boolean)
 
-  const changePermission = (next: FamilyMember['permission']) => {
+  const changePermission = async (next: FamilyMember['permission']) => {
     if (!member || member.permission === next) return
     if (!canManage) {
       setPermError('只有家庭管理员可以修改成员权限')
@@ -51,16 +54,62 @@ export default function ProfilePage() {
       setPermError('至少要保留一位家庭管理员')
       return
     }
+    try {
+      await api.updateMember(member.id, next)
+    } catch (error) {
+      setPermError(error instanceof Error ? error.message : '权限没有保存，请稍后再试')
+      return
+    }
     dispatch({ type: 'updateFamilyMember', id: member.id, patch: { permission: next } })
     setMember({ ...member, permission: next })
     setPermError('')
     toast(`已把${member.name}的权限改为「${PERMISSION_OPTIONS.find((o) => o.value === next)?.label}」`)
   }
 
+  const removeMember = async () => {
+    if (!removing) return
+    if (!canManage) {
+      toast('只有家庭管理员可以移出成员')
+      return
+    }
+    if (removing.id === state.viewerId) {
+      toast('不能移出当前登录的账号')
+      return
+    }
+    const admins = state.family.filter((m) => m.permission === 'admin')
+    if (removing.permission === 'admin' && admins.length <= 1) {
+      toast('至少要保留一位家庭管理员')
+      return
+    }
+    try {
+      await api.removeMember(removing.id)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '移出失败，请稍后再试')
+      return
+    }
+    dispatch({ type: 'removeFamilyMember', id: removing.id })
+    toast(`${removing.name} 已移出家庭`)
+    setRemoving(null)
+  }
+
+  const pickAvatar = async (file: File | undefined) => {
+    if (!file || avatarBusy) return
+    setAvatarBusy(true)
+    try {
+      const url = await uploadAvatar(file)
+      dispatch({ type: 'updateFamilyMember', id: state.viewerId, patch: { avatarUrl: url } })
+      toast('头像已更新')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '头像上传失败')
+    } finally {
+      setAvatarBusy(false)
+      if (avatarRef.current) avatarRef.current.value = ''
+    }
+  }
+
   const menuActions: Record<(typeof PROFILE_MENU)[number]['key'], () => void> = {
     settings: () => navigate('settings'),
     reminders: () => navigate('reminders'),
-    share: () => setShare(true),
     privacy: () => setPrivacy(true),
     about: () => navigate('about' as Route),
   }
@@ -78,9 +127,7 @@ export default function ProfilePage() {
         ? state.reminder.enabled
           ? '已开启'
           : '已关闭'
-        : item.key === 'share'
-          ? `${state.family.length} 位成员`
-          : undefined,
+        : undefined,
     onClick: menuActions[item.key],
   }))
 
@@ -129,39 +176,46 @@ export default function ProfilePage() {
         {babyFacts.length ? <p className="profile-hint">{babyFacts.join(' · ')}</p> : null}
 
         <section className="panel" style={{ marginTop: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span className="eyebrow">家庭成员 · {state.family.length}</span>
-            <button className="section-head__action" onClick={() => setShare(true)}>
-              <Icon name="plus" size={12} />
-              邀请
-            </button>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>
+            家庭成员 · {state.family.length}
           </div>
           {state.family.length ? (
             <>
               <div className="family">
                 {state.family.map((m) => (
                   <button key={m.id} type="button" className="family__item" onClick={() => { setPermError(''); setMember(m) }}>
-                    <span className="family__avatar" style={{ background: m.color }}>
-                      {m.name.slice(0, 1)}
-                    </span>
+                    {m.avatarUrl ? (
+                      <img className="family__avatar family__avatar--img" src={m.avatarUrl} alt="" />
+                    ) : (
+                      <span className="family__avatar" style={{ background: m.color }}>
+                        {m.name.slice(0, 1)}
+                      </span>
+                    )}
                     <span className="family__name">{m.name}</span>
                   </button>
                 ))}
-                <button className="family__item" onClick={() => setShare(true)}>
-                  <span className="family__add">
-                    <Icon name="plus" size={15} />
-                  </span>
-                  <span className="family__name">添加</span>
-                </button>
+                {canManage ? (
+                  <button className="family__item" onClick={() => navigate('invite', 'profile')}>
+                    <span className="family__add">
+                      <Icon name="plus" size={15} />
+                    </span>
+                    <span className="family__name">邀请家人</span>
+                  </button>
+                ) : null}
               </div>
               <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
                 {canManage
-                  ? '点头像可调整权限 · 长辈可以设为只读，看得见，也不必担心误改。'
+                  ? '点头像可调整权限或更换自己的头像 · 长辈可以设为只读，看得见，也不必担心误改。'
                   : '只有家庭管理员可以调整成员权限。'}
               </p>
             </>
           ) : (
-            <div className="empty">还没有家庭成员，邀请家人一起记录吧</div>
+            <div className="empty">
+              <p>还没有家庭成员</p>
+              <button className="btn btn--quiet" type="button" onClick={() => navigate('invite', 'profile')}>
+                邀请家人
+              </button>
+            </div>
           )}
         </section>
 
@@ -239,14 +293,36 @@ export default function ProfilePage() {
         {member ? (
           <>
             <div className="member-card">
-              <span className="family__avatar" style={{ background: member.color, width: 54, height: 54, fontSize: 'calc(18px * var(--type-scale, 1))' }}>
-                {member.name.slice(0, 1)}
-              </span>
+              {member.avatarUrl ? (
+                <img className="family__avatar family__avatar--img" src={member.avatarUrl} alt="" />
+              ) : (
+                <span className="family__avatar" style={{ background: member.color, width: 54, height: 54, fontSize: 'calc(18px * var(--type-scale, 1))' }}>
+                  {member.name.slice(0, 1)}
+                </span>
+              )}
               <div>
                 <div className="switch-row__title">{member.role}</div>
                 <div className="switch-row__sub">{PERMISSION_MAP[member.permission].label}</div>
+                {member.id === state.viewerId ? (
+                  <button
+                    className="avatar-edit"
+                    type="button"
+                    disabled={avatarBusy}
+                    onClick={() => avatarRef.current?.click()}
+                  >
+                    {avatarBusy ? '正在上传…' : member.avatarUrl ? '更换头像' : '设置头像'}
+                  </button>
+                ) : null}
               </div>
             </div>
+            <input
+              ref={avatarRef}
+              className="sr-only"
+              type="file"
+              accept="image/*"
+              aria-label="选择头像图片"
+              onChange={(event) => void pickAvatar(event.target.files?.[0])}
+            />
 
             {canManage ? (
               <div className="perm-block">
@@ -304,25 +380,7 @@ export default function ProfilePage() {
             <button
               className="btn btn--danger"
               style={{ flex: 1 }}
-              onClick={() => {
-                if (!removing) return
-                if (!canManage) {
-                  toast('只有家庭管理员可以移出成员')
-                  return
-                }
-                if (removing.id === state.viewerId) {
-                  toast('不能移出当前登录的账号')
-                  return
-                }
-                const admins = state.family.filter((m) => m.permission === 'admin')
-                if (removing.permission === 'admin' && admins.length <= 1) {
-                  toast('至少要保留一位家庭管理员')
-                  return
-                }
-                dispatch({ type: 'removeFamilyMember', id: removing.id })
-                toast(`${removing.name} 已移出家庭`)
-                setRemoving(null)
-              }}
+              onClick={() => void removeMember()}
             >
               确认移出
             </button>
@@ -331,44 +389,6 @@ export default function ProfilePage() {
       >
         <p className="about-copy" style={{ marginBottom: 0 }}>
           如果只是暂时不想让长辈看到，也可以把权限改为只读，不必移出家庭。
-        </p>
-      </Sheet>
-
-      <Sheet
-        open={share}
-        onClose={() => setShare(false)}
-        title="家庭共享"
-        desc="邀请家人一起记录，也可以只让他们看见。"
-        footer={
-          <button
-            className="btn btn--primary btn--full"
-            onClick={() => {
-              toast('邀请链接已复制，发给家人即可')
-              setShare(false)
-            }}
-          >
-            复制邀请链接
-          </button>
-        }
-      >
-        <div style={{ display: 'grid', gap: 10 }}>
-          {state.family.map((m) => (
-            <div key={m.id} className="switch-row" style={{ padding: '10px 0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span className="family__avatar" style={{ background: m.color, width: 34, height: 34 }}>
-                  {m.name.slice(0, 1)}
-                </span>
-                <div>
-                  <div className="switch-row__title">{m.name}</div>
-                  <div className="switch-row__sub">{PERMISSION_MAP[m.permission].label}</div>
-                </div>
-              </div>
-              <span style={{ fontSize: 'calc(10px * var(--type-scale, 1))', color: 'var(--ink-3)' }}>{m.role}</span>
-            </div>
-          ))}
-        </div>
-        <p className="about-note" style={{ textAlign: 'left' }}>
-          宝宝照片与成长数据仅家庭成员可见，默认不公开。成员可以随时被移出家庭。
         </p>
       </Sheet>
 

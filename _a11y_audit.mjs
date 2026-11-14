@@ -113,6 +113,8 @@ const ROUTES = [
   ['growth', '#/growth'],
   ['album', '#/album'],
   ['profile', '#/profile'],
+  ['invite', '#/invite'],
+  ['join', '#/join?t=0123456789abcdef0123456789abcdef'],
   ['baby', '#/baby'],
   ['reminders', '#/reminders'],
   ['settings', '#/settings'],

@@ -92,6 +92,72 @@ SCHEMA = [
       CONSTRAINT fk_media_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 一个家庭 = 一份共享 AppState。邀请加入的是家庭，不是某个人。
+    """
+    CREATE TABLE IF NOT EXISTS households (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name VARCHAR(60) NOT NULL DEFAULT '宝宝的小屋',
+      created_by BIGINT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_households_creator (created_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS household_members (
+      household_id BIGINT UNSIGNED NOT NULL,
+      user_id BIGINT UNSIGNED NOT NULL,
+      permission ENUM('admin','edit','read') NOT NULL DEFAULT 'edit',
+      joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (household_id, user_id),
+      UNIQUE KEY uk_member_user (user_id),
+      CONSTRAINT fk_hm_household FOREIGN KEY (household_id) REFERENCES households (id) ON DELETE CASCADE,
+      CONSTRAINT fk_hm_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS invites (
+      token CHAR(32) NOT NULL,
+      household_id BIGINT UNSIGNED NOT NULL,
+      created_by BIGINT UNSIGNED NOT NULL,
+      permission ENUM('admin','edit','read') NOT NULL DEFAULT 'edit',
+      expires_at DATETIME NOT NULL,
+      used_at DATETIME NULL,
+      used_by BIGINT UNSIGNED NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (token),
+      KEY idx_invites_household (household_id, created_at),
+      CONSTRAINT fk_invites_household FOREIGN KEY (household_id) REFERENCES households (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS household_state (
+      household_id BIGINT UNSIGNED NOT NULL,
+      state_json MEDIUMTEXT NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (household_id),
+      CONSTRAINT fk_hstate_household FOREIGN KEY (household_id) REFERENCES households (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+]
+
+# 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段，必须自己检查。
+MIGRATIONS = [
+    (
+        "users",
+        "avatar_media_id",
+        "ALTER TABLE users ADD COLUMN avatar_media_id CHAR(32) NULL AFTER baby_birthday",
+    ),
+    (
+        "media",
+        "household_id",
+        "ALTER TABLE media ADD COLUMN household_id BIGINT UNSIGNED NULL AFTER user_id",
+    ),
+    (
+        "media",
+        "idx_media_household",
+        "ALTER TABLE media ADD KEY idx_media_household (household_id, created_at)",
+    ),
 ]
 
 
@@ -153,6 +219,32 @@ def init_schema() -> None:
         with conn.cursor() as cur:
             for ddl in SCHEMA:
                 cur.execute(ddl)
+            _migrate_columns(cur)
+
+
+def _migrate_columns(cur) -> None:
+    """幂等补列/补索引：老库升级时不需要手工跑 SQL。"""
+    for table, name, ddl in MIGRATIONS:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s
+            """,
+            (table, name),
+        )
+        if cur.fetchone()["n"]:
+            continue
+        if name.startswith("idx_"):
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s
+                """,
+                (table, name),
+            )
+            if cur.fetchone()["n"]:
+                continue
+        cur.execute(ddl)
 
 
 def ping() -> tuple[bool, str]:

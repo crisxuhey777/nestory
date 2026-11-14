@@ -128,6 +128,8 @@ type Store = {
   toasts: Toast[]
   dismiss: (id: number) => void
   signOut: () => void
+  /** 从后端重新拉一次状态（加入家庭、换头像后需要） */
+  reload: () => Promise<void>
 }
 
 const StoreContext = createContext<Store | null>(null)
@@ -240,6 +242,8 @@ function ReadyStore({
   const saveChain = useRef<Promise<unknown>>(Promise.resolve())
   const latestState = useRef(state)
   const dirty = useRef(false)
+  /** reload() 带回来的状态不需要再回写一遍（只读成员回写还会 403） */
+  const skipNextSave = useRef(false)
 
   useEffect(() => {
     latestState.current = state
@@ -259,6 +263,11 @@ function ReadyStore({
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false
+      return
+    }
+    if (skipNextSave.current) {
+      skipNextSave.current = false
+      latestState.current = state
       return
     }
     const snapshot = state
@@ -305,9 +314,23 @@ function ReadyStore({
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
+  const reload = useCallback(async () => {
+    try {
+      const session = await api.me()
+      skipNextSave.current = true
+      apply({ type: 'hydrate', state: session.state })
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        signOut()
+        return
+      }
+      toast(error instanceof Error ? error.message : '刷新失败')
+    }
+  }, [signOut, toast])
+
   const value = useMemo(
-    () => ({ state, dispatch, user: session.user, toast, toasts, dismiss, signOut }),
-    [state, dispatch, session.user, toast, toasts, dismiss, signOut],
+    () => ({ state, dispatch, user: session.user, toast, toasts, dismiss, signOut, reload }),
+    [state, dispatch, session.user, toast, toasts, dismiss, signOut, reload],
   )
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
