@@ -1,4 +1,4 @@
-import type { AppState } from './types'
+import type { AppState, Milestone } from './types'
 
 export type User = {
   id: number
@@ -145,6 +145,21 @@ export function isAppState(value: unknown): value is AppState {
     Number.isFinite(state.reminder.intervalMinutes) &&
     typeof state.reminder.quietNight === 'boolean' &&
     typeof state.reminder.vibration === 'boolean'
+  )
+}
+
+export function isMilestone(value: unknown): value is Milestone {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Partial<Milestone>
+  return (
+    typeof item.id === 'string' &&
+    item.id.length > 0 &&
+    typeof item.at === 'number' &&
+    Number.isFinite(item.at) &&
+    typeof item.title === 'string' &&
+    item.title.length > 0 &&
+    (item.kind === 'milestone' || item.kind === 'anniversary') &&
+    (item.note === undefined || typeof item.note === 'string')
   )
 }
 

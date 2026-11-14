@@ -6,6 +6,7 @@ import { ApiError, api, isAppState } from './api'
 import AuthScreen from '../components/AuthScreen'
 import BootScreen from '../components/Boot'
 import { normalizeBirthState } from '../lib/birth'
+import { appendMilestone } from '../lib/milestones'
 import { pruneTrash } from '../lib/trash'
 import { haptic } from '../lib/notify'
 import { retryDelay } from '../lib/retry'
@@ -133,8 +134,10 @@ function rawReducer(state: AppState, action: Action): AppState {
       const ids = new Set(action.ids)
       return { ...state, trash: (state.trash ?? []).filter((t) => !ids.has(t.id)) }
     }
-    case 'addMilestone':
-      return { ...state, milestones: [action.milestone, ...state.milestones] }
+    case 'addMilestone': {
+      const next = appendMilestone(state.milestones, action.milestone)
+      return next === state.milestones ? state : { ...state, milestones: next }
+    }
     case 'updatePhoto':
       return {
         ...state,

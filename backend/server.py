@@ -965,7 +965,6 @@ class Handler(BaseHTTPRequestHandler):
             "note": result["note"],
             "kind": "milestone",
         }
-        new_state = {**state, "milestones": [*state.get("milestones", []), milestone]}
         payload = {
             "source": "ai",
             "generatedAt": now,
@@ -973,7 +972,8 @@ class Handler(BaseHTTPRequestHandler):
             "provider": result["provider"],
             "model": result["model"],
             "ai": result,
-            "state": new_state,
+            # 只回新增的里程碑：客户端把它追加到本地状态，避免整份 state 覆盖并发编辑。
+            "milestone": milestone,
         }
         self._send_ai(payload, "summary", result["title"], result["elapsedMs"])
 

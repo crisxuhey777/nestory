@@ -8,8 +8,8 @@ import AiThinking from '../components/AiThinking'
 import { Sheet } from '../components/Sheet'
 import { DiaperSheet, GrowthSheet, SleepSheet } from '../components/QuickSheets'
 import { FeedSheet } from '../components/FeedSheet'
-import { useStore, isAppState } from '../data/store'
-import { aiPost } from '../data/api'
+import { useStore } from '../data/store'
+import { aiPost, isMilestone } from '../data/api'
 import type { AppState } from '../data/types'
 import { usePrefs } from '../lib/prefs'
 import {
@@ -242,18 +242,18 @@ export default function HomePage() {
     toast('首页照片已更新')
   }
 
-  /** 把当前 AppState 发给后端，由大模型写一条小结；后端包回完整的 AppState 后直接接管。 */
+  /** 把当前 AppState 发给后端，由大模型写一条小结；只把新增的里程碑追加进本地状态，不整份覆盖。 */
   const generateSummary = async () => {
     if (ai.status === 'loading') return
     setAi({ status: 'loading' })
     try {
-      const payload = await aiPost<{ state: unknown; ai?: { title?: unknown; note?: unknown } }>(
+      const payload = await aiPost<{ milestone?: unknown; ai?: { title?: unknown; note?: unknown } }>(
         API.aiSummary,
         { state },
         120_000,
       )
-      if (!isAppState(payload.state)) throw new Error('生成失败，请稍后再试')
-      dispatch({ type: 'hydrate', state: payload.state })
+      if (!isMilestone(payload.milestone)) throw new Error('生成失败，请稍后再试')
+      dispatch({ type: 'addMilestone', milestone: payload.milestone })
       setAi({
         status: 'done',
         title: typeof payload.ai?.title === 'string' ? payload.ai.title : '今日小结',
