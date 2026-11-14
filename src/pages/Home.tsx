@@ -5,9 +5,11 @@ import AiThinking from '../components/AiThinking'
 import { Sheet } from '../components/Sheet'
 import { DiaperSheet, GrowthSheet, SleepSheet } from '../components/QuickSheets'
 import { FeedSheet } from '../components/FeedSheet'
-import { useStore, isAppState } from '../data/store'
+import { useStore, isAppState, uid } from '../data/store'
 import type { AppState } from '../data/types'
 import { usePrefs } from '../lib/prefs'
+import { uploadPhoto } from '../lib/media'
+import { viewerName } from '../lib/viewer'
 import {
   ageBetween,
   ageLabel,
@@ -15,6 +17,7 @@ import {
   fromISODate,
   isSameDay,
   minutesLabel,
+  monthDay,
   relativeFromNow,
   timeHM,
   daysUntilAnniversary,
@@ -135,6 +138,11 @@ export default function HomePage() {
   const [ai, setAi] = useState<{ status: 'idle' | 'loading' | 'done'; title?: string; note?: string }>({
     status: 'idle',
   })
+  const [annivOpen, setAnnivOpen] = useState(false)
+  const [annivNote, setAnnivNote] = useState('')
+  const [annivPhoto, setAnnivPhoto] = useState<{ file: File; url: string } | null>(null)
+  const [annivBusy, setAnnivBusy] = useState(false)
+  const annivInput = useRef<HTMLInputElement>(null)
   const heroTrack = useRef<HTMLDivElement>(null)
   const pausedUntil = useRef(0)
 
@@ -292,6 +300,66 @@ export default function HomePage() {
 
   const weightDelta =
     latest?.weightKg != null && prev?.weightKg != null ? latest.weightKg - prev.weightKg : null
+
+  const closeAnniversary = () => {
+    setAnnivOpen(false)
+    setAnnivNote('')
+    setAnnivBusy(false)
+    setAnnivPhoto((current) => {
+      if (current) URL.revokeObjectURL(current.url)
+      return null
+    })
+  }
+
+  const pickAnniversaryPhoto = (file: File | undefined, input: HTMLInputElement) => {
+    input.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      toast('先选一张照片')
+      return
+    }
+    setAnnivPhoto((current) => {
+      if (current) URL.revokeObjectURL(current.url)
+      return { file, url: URL.createObjectURL(file) }
+    })
+  }
+
+  const saveAnniversary = async () => {
+    if (!next || annivBusy) return
+    const note = annivNote.trim()
+    if (!note && !annivPhoto) {
+      toast('写一句话，或选一张照片')
+      return
+    }
+    setAnnivBusy(true)
+    try {
+      const at = Date.now()
+      if (annivPhoto) {
+        const { url, thumb } = await uploadPhoto(annivPhoto.file)
+        dispatch({
+          type: 'addPhoto',
+          photo: {
+            id: uid('ph'),
+            src: url,
+            thumb,
+            at,
+            caption: note || next.label,
+            author: viewerName(state),
+            kind: 'photo',
+          },
+        })
+      }
+      dispatch({
+        type: 'addMilestone',
+        milestone: { id: uid('ms'), at, title: next.label, note: note || undefined, kind: 'anniversary' },
+      })
+      toast(`已记下${next.label}`)
+      closeAnniversary()
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '保存失败，再试一次')
+      setAnnivBusy(false)
+    }
+  }
 
   return (
     <div className="page">
@@ -554,17 +622,31 @@ export default function HomePage() {
 
       {next ? (
         <section className="section" style={{ marginTop: 24 }}>
-          <button className="anniversary" onClick={() => navigate('album')} style={{ width: '100%', textAlign: 'left' }}>
-            <span className="anniversary__num">
-              {next.days}
-              <small>天</small>
-            </span>
-            <span className="anniversary__text">
-              <span className="anniversary__title">距离{next.label}</span>
-              <span className="anniversary__sub">在那一天，留下一张照片和一句话</span>
-            </span>
-            <Icon name="chevronRight" size={16} style={{ color: 'var(--ink-3)' }} />
-          </button>
+          {next.days === 0 ? (
+            <button
+              className="anniversary anniversary--today"
+              onClick={() => setAnnivOpen(true)}
+              style={{ width: '100%', textAlign: 'left' }}
+            >
+              <span className="anniversary__num">今天</span>
+              <span className="anniversary__text">
+                <span className="anniversary__title">{next.label}</span>
+                <span className="anniversary__sub">留下一张照片和一句话，记下这一天</span>
+              </span>
+              <Icon name="chevronRight" size={16} style={{ color: 'var(--ink-3)' }} />
+            </button>
+          ) : (
+            <div className="anniversary">
+              <span className="anniversary__num">
+                {next.days}
+                <small>天</small>
+              </span>
+              <span className="anniversary__text">
+                <span className="anniversary__title">距离{next.label}</span>
+                <span className="anniversary__sub">{monthDay(next.at)} · 到那天会请你记下来</span>
+              </span>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -717,6 +799,59 @@ export default function HomePage() {
             </p>
           </>
         )}
+      </Sheet>
+
+      <Sheet
+        open={annivOpen}
+        onClose={closeAnniversary}
+        title={next?.label ?? '纪念日'}
+        desc={
+          next
+            ? `今天是${state.baby.name ? `${state.baby.name}的` : ''}${next.label}。留下一张照片和一句话，会出现在成长时间轴。`
+            : ''
+        }
+        footer={
+          <div className="anniversary-foot">
+            <button className="btn btn--quiet" onClick={closeAnniversary} type="button">
+              先不记
+            </button>
+            <button className="btn btn--primary" onClick={saveAnniversary} disabled={annivBusy} type="button">
+              {annivBusy ? '保存中…' : '记下来'}
+            </button>
+          </div>
+        }
+      >
+        <div className="anniversary-form">
+          <label className="field">
+            <span className="field__label">今天的一句话</span>
+            <textarea
+              className="input"
+              value={annivNote}
+              onChange={(event) => setAnnivNote(event.target.value)}
+              placeholder="比如：第一次抬头看我们。"
+              rows={3}
+              maxLength={200}
+            />
+          </label>
+          <button type="button" className="anniversary-photo" onClick={() => annivInput.current?.click()}>
+            {annivPhoto ? (
+              <img src={annivPhoto.url} alt="" />
+            ) : (
+              <>
+                <Icon name="camera" size={18} />
+                <span>选一张今天的照片（可跳过）</span>
+              </>
+            )}
+          </button>
+          <input
+            ref={annivInput}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) => pickAnniversaryPhoto(event.target.files?.[0], event.currentTarget)}
+            aria-label="选择纪念日照片"
+          />
+        </div>
       </Sheet>
 
       <FeedSheet open={sheet === 'feed'} onClose={() => setSheet(null)} />

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { Dispatch, ReactNode } from 'react'
-import type { AppState, Baby, DiaperRecord, FamilyMember, FeedRecord, GrowthRecord, Photo, Reminder, SleepRecord } from './types'
+import type { AppState, Baby, DiaperRecord, FamilyMember, FeedRecord, GrowthRecord, Milestone, Photo, Reminder, SleepRecord } from './types'
 import type { RegisterInput, Session, User } from './api'
 import { ApiError, api, isAppState } from './api'
 import AuthScreen from '../components/AuthScreen'
@@ -20,6 +20,7 @@ type Action =
   | { type: 'addDiaper'; diaper: DiaperRecord }
   | { type: 'addGrowth'; growth: GrowthRecord }
   | { type: 'addPhoto'; photo: Photo }
+  | { type: 'addMilestone'; milestone: Milestone }
   | { type: 'updatePhoto'; id: string; patch: Partial<Photo> }
   | { type: 'setPhotoVisuals'; visuals: { id: string; visualCaption: string; visualAt: number }[] }
   | { type: 'setHeroPhotos'; ids: string[] }
@@ -42,6 +43,7 @@ const HAPTIC_ACTIONS: ReadonlySet<Action['type']> = new Set<Action['type']>([
   'addDiaper',
   'addGrowth',
   'addPhoto',
+  'addMilestone',
 ])
 
 function rawReducer(state: AppState, action: Action): AppState {
@@ -65,6 +67,8 @@ function rawReducer(state: AppState, action: Action): AppState {
       return { ...state, growths: [...state.growths, action.growth] }
     case 'addPhoto':
       return { ...state, photos: [action.photo, ...state.photos] }
+    case 'addMilestone':
+      return { ...state, milestones: [action.milestone, ...state.milestones] }
     case 'updatePhoto':
       return {
         ...state,
