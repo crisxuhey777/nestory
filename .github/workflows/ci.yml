@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 代码检查
+        run: npm run lint
+      - name: 类型检查
+        run: npm run typecheck
+      - name: 单元测试
+        run: npm run test
+      - name: 构建
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 语法检查
+        run: python -m py_compile backend/*.py
+      - name: 后端单元测试
+        run: python -m unittest discover -s backend/tests -t backend -v

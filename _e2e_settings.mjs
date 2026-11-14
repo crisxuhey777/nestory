@@ -8,6 +8,10 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+// 头像改为上传到媒体库后，src 可能是 data:image（旧）或 /api/media/blob/…（新）
+const isUploadedAvatar = (src) =>
+  typeof src === 'string' && (src.startsWith('data:image/') || src.includes('/api/media/blob/') || src.includes('/api/me/avatar'))
+
 const BASE = process.argv[2] ?? 'http://localhost:5178'
 const port = 9600 + Math.floor(Math.random() * 150)
 const profile = mkdtempSync(join(tmpdir(), 'nestory-settings-'))
@@ -181,13 +185,16 @@ const input = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selecto
 check('资料表单有文件输入', input.nodeId > 0, String(input.nodeId))
 await send('DOM.setFileInputFiles', { nodeId: input.nodeId, files: [resolve('public/assets/photos/p3@520.jpg')] })
 await sleep(900)
-check('上传后出现自定义头像', (await evaluate(`document.querySelector('.avatar-picker__item--on img').src.startsWith('data:image/')`)) === true, '')
+const pickerSrc = await evaluate(`document.querySelector('.avatar-picker__item--on img')?.src ?? ''`)
+check('上传后出现自定义头像', isUploadedAvatar(pickerSrc), pickerSrc)
 await clickText('保存资料')
 await sleep(700)
-check('保存后头像使用上传图', (await evaluate(`document.querySelector('.profile-hero__avatar').src.startsWith('data:image/')`)) === true, '')
+const savedAvatar = await evaluate(`document.querySelector('.profile-hero__avatar')?.src ?? ''`)
+check('保存后头像使用上传图', isUploadedAvatar(savedAvatar), savedAvatar)
 
 await goto(BASE + '/#/profile')
-check('刷新后头像仍是上传图', (await evaluate(`document.querySelector('.profile-hero__avatar').src.startsWith('data:image/')`)) === true, '')
+const reloadedAvatar = await evaluate(`document.querySelector('.profile-hero__avatar')?.src ?? ''`)
+check('刷新后头像仍是上传图', isUploadedAvatar(reloadedAvatar), reloadedAvatar)
 
 // ---------- back targets ----------
 await goto(BASE + '/#/settings')

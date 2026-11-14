@@ -157,11 +157,13 @@ await evaluate(`document.querySelector('.sheet-backdrop').click()`)
 await sleep(350)
 check('关闭喂养面板回到首页', (await evaluate(`!document.querySelector('.sheet')`)) === true, '')
 
-// ---------- 3. 快速记录表单 ----------
-await goto(BASE + '/#/record')
+// ---------- 3. 快速记录表单（首页底部面板；#/record 已下线） ----------
+await goto(BASE + '/#/home')
 await sleep(350)
+await evaluate(`document.querySelector('.quick__item[aria-label="快速记录喂奶"]').click()`)
+await sleep(450)
 check('快速记录初次进入没有选中方式', (await evaluate(`document.querySelectorAll('.method--on').length`)) === 0, '')
-check('未选方式不能保存', (await evaluate(`document.querySelector('.save-bar .btn').disabled`)) === true, '')
+check('未选方式不能保存', (await evaluate(`[...document.querySelectorAll('.sheet .btn--primary')].find((b) => b.textContent.includes('保存这次喂养'))?.disabled`)) === true, '')
 
 await clickText('瓶喂母乳')
 await sleep(300)
@@ -188,8 +190,7 @@ await clickText('结束本节')
 await sleep(250)
 const digits = await text('.timer__digits')
 check('计时器实际走动', digits !== '00:00:00', digits)
-const preview = await text('.composer__meta')
-check('记录预览显示亲喂时长', preview.includes('亲喂'), preview)
+check('亲喂计时后可以直接保存', (await evaluate(`[...document.querySelectorAll('.sheet .btn--primary')].find((b) => b.textContent.includes('保存这次喂养'))?.disabled`)) === false, '')
 
 // ---------- 4. 保存记录 ----------
 await clickText('保存这次喂养')
@@ -295,9 +296,11 @@ await evaluate(`document.querySelector('.history-screen__head .icon-btn').click(
 await sleep(350)
 check('二级界面可返回', (await evaluate(`!document.querySelector('.history-screen')`)) === true, '')
 
-// ---------- 8. 瓶喂记录真实时间 ----------
-await goto(BASE + '/#/record')
+// ---------- 8. 瓶喂记录真实时间（首页底部面板） ----------
+await goto(BASE + '/#/home')
 await sleep(350)
+await evaluate(`document.querySelector('.quick__item[aria-label="快速记录喂奶"]').click()`)
+await sleep(450)
 await clickText('瓶喂母乳')
 await sleep(300)
 await evaluate(`(() => {
@@ -367,10 +370,11 @@ await goto(BASE + '/#/feed')
 await evaluate(`document.querySelector('.screen-head .icon-btn').click()`)
 await sleep(400)
 check('喂养中心返回首页', (await evaluate('location.hash')) === '#/home', await evaluate('location.hash'))
-await goto(BASE + '/#/record')
-await evaluate(`document.querySelector('.screen-head .icon-btn').click()`)
+await evaluate(`document.querySelector('.quick__item[aria-label="快速记录喂奶"]').click()`)
 await sleep(400)
-check('快速记录返回首页', (await evaluate('location.hash')) === '#/home', await evaluate('location.hash'))
+await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+await sleep(350)
+check('快速记录面板可关闭并留在首页', (await evaluate(`!document.querySelector('.sheet') && location.hash === '#/home'`)) === true, '')
 
 // ---------- 12. 控制台错误 ----------
 const errors = await evaluate(`window.__nestoryErrors ? window.__nestoryErrors.length : 0`).catch(() => 0)

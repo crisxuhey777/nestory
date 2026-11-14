@@ -3,13 +3,16 @@ import { Icon } from '../brand/icons'
 import type { IconName } from '../brand/icons'
 import { ScreenHead, SectionHead } from '../components/Common'
 import { Sheet } from '../components/Sheet'
+import { FeedBreastTimer } from '../components/FeedBreastTimer'
+import { FeedStatsPanel } from '../components/FeedStatsPanel'
+import { RecordGroups, recordTitle } from '../components/FeedRecords'
 import { useStore, uid } from '../data/store'
 import type { FeedRecord } from '../data/types'
-import { clock, durationLabel, minutesLabel, shortSpan, startOfDay, timeHM } from '../lib/date'
+import { durationLabel, minutesLabel, startOfDay, timeHM } from '../lib/date'
 import { isBeforeBirth } from '../lib/birth'
 import { feedIntervals, feedStats, last7Days } from '../lib/stats'
 import type { FeedKind } from '../lib/stats'
-import { goBack, navigate } from '../lib/route'
+import { navigate } from '../lib/route'
 import { viewerName } from '../lib/viewer'
 import { FEED_DEFAULTS, FEED_METHODS, FEED_PRESETS } from '../data/config'
 
@@ -49,27 +52,8 @@ function dayLabel(ts: number): string {
   return `${x.getMonth() + 1} 月 ${x.getDate()} 日`
 }
 
-function recordTitle(r: FeedRecord): string {
-  const parts: string[] = []
-  const sec = r.leftSec + r.rightSec
-  if (sec > 0) {
-    const t = sec >= 60 ? `${Math.floor(sec / 60)} 分${sec % 60 ? ` ${sec % 60} 秒` : ''}` : `${sec} 秒`
-    const side = [
-      r.leftSec >= 30 ? `左 ${Math.max(1, Math.round(r.leftSec / 60))}′` : null,
-      r.rightSec >= 30 ? `右 ${Math.max(1, Math.round(r.rightSec / 60))}′` : null,
-    ]
-      .filter(Boolean)
-      .join(' / ')
-    parts.push(`亲喂 ${t}${side ? `（${side}）` : ''}`)
-  }
-  if (r.bottleMl > 0) parts.push(`瓶喂母乳 ${r.bottleMl} ml`)
-  if (r.formulaMl > 0) parts.push(`配方奶 ${r.formulaMl} ml`)
-  return parts.join(' · ') || '未记录内容'
-}
-
-export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' }) {
+export default function FeedPage() {
   const { state, dispatch, toast } = useStore()
-  const quick = mode === 'quick'
   const viewer = viewerName(state)
   const now = Date.now()
   const stats = feedStats(state.feeds, state.reminder.intervalMinutes, now)
@@ -87,7 +71,7 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
   const [editing, setEditing] = useState<FeedRecord | null>(null)
   const [deleting, setDeleting] = useState<FeedRecord | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const showComposer = quick || !!editing
+  const showComposer = !!editing
 
   const lastTick = useRef(Date.now())
   const composerRef = useRef<HTMLDivElement>(null)
@@ -183,7 +167,8 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
     const record: FeedRecord = {
       id: editing?.id ?? uid('f'),
       startedAt,
-      endedAt: breastTotal > 0 ? Date.now() : startedAt,
+      // 结束时间跟着「开始时间 + 亲喂时长」走；编辑旧记录时不能改成「现在」。
+      endedAt: breastTotal > 0 ? startedAt + breastTotal * 1000 : startedAt,
       leftSec: breastOn ? Math.round(leftSec) : 0,
       rightSec: breastOn ? Math.round(rightSec) : 0,
       bottleMl: methods.includes('bottle') ? bottleMl : 0,
@@ -195,10 +180,6 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
     dispatch({ type: editing ? 'updateFeed' : 'addFeed', feed: record })
     toast(editing ? '记录已更新，统计已重新计算' : `已记录喂养 · ${timeHM(record.startedAt)}`)
     resetComposer()
-    if (quick) {
-      goBack('home')
-      return
-    }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -253,46 +234,31 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
   const groups = groupRecords(sorted.slice(0, 3))
 
   const week = last7Days(state.feeds, now)
-  const maxWeek = Math.max(1, ...week.map((w) => w.count))
   const totalBreastSec = Math.round(leftSec + rightSec)
 
   return (
     <div className="page page--sub">
-      <ScreenHead
-        title={quick ? '记录喂养' : '喂养中心'}
-        sub={quick ? 'QUICK LOG' : 'FEEDING'}
-      />
+      <ScreenHead title="喂养中心" sub="FEEDING" />
 
       <div className="page__body">
-        {quick ? (
-          <div className="quick-context">
-            <span className="quick-context__dot" aria-hidden="true" />
-            <span>
+        <div className="feed-today">
+          <span className="feed-today__accent" aria-hidden="true" />
+          <div className="feed-today__main">
+            <div className="feed-today__title">
+              今天已喂养 <b>{stats.count}</b> 次
+              {stats.totalMl > 0 ? (
+                <>
+                  {' · '}瓶喂 <b>{stats.totalMl}</b> ml
+                </>
+              ) : null}
+            </div>
+            <div className="feed-today__sub">
               {stats.lastAt
-                ? `上次 ${timeHM(stats.lastAt)} · 已过 ${minutesLabel(stats.sinceLastMin)}`
+                ? `最近一次 ${timeHM(stats.lastAt)} · 已过 ${minutesLabel(stats.sinceLastMin)}`
                 : '今天还没有记录，从第一餐开始'}
-            </span>
-          </div>
-        ) : (
-          <div className="feed-today">
-            <span className="feed-today__accent" aria-hidden="true" />
-            <div className="feed-today__main">
-              <div className="feed-today__title">
-                今天已喂养 <b>{stats.count}</b> 次
-                {stats.totalMl > 0 ? (
-                  <>
-                    {' · '}瓶喂 <b>{stats.totalMl}</b> ml
-                  </>
-                ) : null}
-              </div>
-              <div className="feed-today__sub">
-                {stats.lastAt
-                  ? `最近一次 ${timeHM(stats.lastAt)} · 已过 ${minutesLabel(stats.sinceLastMin)}`
-                  : '今天还没有记录，从第一餐开始'}
-              </div>
             </div>
           </div>
-        )}
+        </div>
 
         {showComposer ? (
         <div className="composer" ref={composerRef}>
@@ -328,60 +294,20 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
           </div>
 
           {methods.includes('breast') ? (
-            <div className="editor">
-              <div className="editor__head">
-                <span className="editor__title">亲喂计时</span>
-                <span className="editor__note">分钟数不换算毫升</span>
-              </div>
-              <div className="timer">
-                <div className="timer__digits">{clock(totalBreastSec)}</div>
-                <div className="timer__hint">
-                  {running ? `正在记录 · ${side === 'left' ? '左侧' : '右侧'}` : '左右侧可随时切换，计时会累加'}
-                </div>
-                <div className="sides">
-                  <button
-                    className={`side${side === 'left' ? ' side--on' : ''}${running && side === 'left' ? ' side--timing' : ''}`}
-                    onClick={() => setSide('left')}
-                  >
-                    <span className="side__label">
-                      <i className="side__dot" />
-                      左侧
-                    </span>
-                    <span className="side__time">{clock(Math.floor(leftSec))}</span>
-                  </button>
-                  <button
-                    className={`side${side === 'right' ? ' side--on' : ''}${running && side === 'right' ? ' side--timing' : ''}`}
-                    onClick={() => setSide('right')}
-                  >
-                    <span className="side__label">
-                      <i className="side__dot" />
-                      右侧
-                    </span>
-                    <span className="side__time">{clock(Math.floor(rightSec))}</span>
-                  </button>
-                </div>
-                <div className="timer__actions">
-                  <button
-                    className={`btn ${running ? 'btn--quiet' : 'btn--primary'}`}
-                    onClick={toggleRunning}
-                  >
-                    <Icon name={running ? 'pause' : 'play'} size={15} />
-                    {running ? '暂停计时' : hasBreast ? '继续计时' : '开始计时'}
-                  </button>
-                  <button
-                    className="btn btn--champagne"
-                    onClick={() => {
-                      setRunning(false)
-                      if (hasBreast) toast('本节已记录，可继续补充其他方式')
-                    }}
-                    disabled={!hasBreast}
-                  >
-                    <Icon name="check" size={15} />
-                    结束本节
-                  </button>
-                </div>
-              </div>
-            </div>
+            <FeedBreastTimer
+              totalSec={totalBreastSec}
+              leftSec={leftSec}
+              rightSec={rightSec}
+              side={side}
+              running={running}
+              hasBreast={hasBreast}
+              onSide={setSide}
+              onToggle={toggleRunning}
+              onEnd={() => {
+                setRunning(false)
+                if (hasBreast) toast('本节已记录，可继续补充其他方式')
+              }}
+            />
           ) : null}
 
           {methods.includes('bottle') ? (
@@ -544,141 +470,25 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
         </div>
         ) : null}
 
-        {quick ? (
-          <section className="quick-recent">
-            <div className="quick-recent__head">
-              <span className="eyebrow">最近</span>
-              <button onClick={() => navigate('feed')}>
-                喂养中心
-                <Icon name="chevronRight" size={13} />
-              </button>
-            </div>
-            {sorted.slice(0, 5).map((r) => (
-              <div key={r.id} className="quick-record">
-                <span className="quick-record__time">{timeHM(r.startedAt)}</span>
-                <span className="quick-record__title">{recordTitle(r)}</span>
-              </div>
-            ))}
-            <p className="quick-note">保存后回到首页。统计、间隔与完整记录在喂养中心查看。</p>
-          </section>
-        ) : null}
-
-        {!quick ? (
-          <>
-        <section className="stats-block">
-          <SectionHead title="今日统计" en="Overview" />
-          <div className="stat-strip">
-            <div className="stat-strip__item">
-              <div className="stat-strip__value">
-                {stats.count}
-                <small>次</small>
-              </div>
-              <div className="stat-strip__label">喂养次数</div>
-            </div>
-            <div className="stat-strip__item">
-              <div className="stat-strip__value">
-                {Math.round(stats.breastSec / 60)}
-                <small>分</small>
-              </div>
-              <div className="stat-strip__label">亲喂时长</div>
-            </div>
-            <div className="stat-strip__item">
-              <div className="stat-strip__value">
-                {stats.totalMl}
-                <small>ml</small>
-              </div>
-              <div className="stat-strip__label">瓶喂总量</div>
-            </div>
-            <div className="stat-strip__item">
-              <div className="stat-strip__value" style={{ fontSize: 'calc(20px * var(--type-scale, 1))' }}>
-                {stats.avgIntervalMin ? shortSpan(stats.avgIntervalMin) : '—'}
-              </div>
-              <div className="stat-strip__label">平均间隔</div>
-            </div>
-          </div>
-
-          <div className="trend" style={{ marginTop: 12 }}>
-            <div className="trend__head">
-              <span className="trend__title">近 7 天喂养次数</span>
-              <span className="trend__value">共 {week.reduce((a, b) => a + b.count, 0)} 次</span>
-            </div>
-            <div className="bars">
-              {week.map((w, i) => (
-                <div key={w.day} className="bars__col">
-                  <span className="bars__value">{w.count || ''}</span>
-                  <div className="bars__track">
-                    <div
-                      className={`bars__fill${i === week.length - 1 ? ' bars__fill--today' : ''}${
-                        w.count === 0 ? ' bars__fill--zero' : ''
-                      }`}
-                      style={{ height: `${w.count === 0 ? 4 : Math.max(10, Math.round((w.count / maxWeek) * 58))}px` }}
-                    />
-                  </div>
-                  <span className="bars__label">{w.label}</span>
-                </div>
-              ))}
-            </div>
-            <p className="timer__hint" style={{ textAlign: 'left', marginTop: 12 }}>
-              间隔 = 本次开始时间 − 上次开始时间；深夜跨天也按真实时间计算，亲喂时长不折算毫升。
-            </p>
-          </div>
-
-          <button
-            className="anniversary"
-            style={{ width: '100%', marginTop: 12, textAlign: 'left', background: 'var(--ivory-deep)' }}
-            onClick={() => navigate('reminders')}
-          >
-            <Icon name="bell" size={20} />
-            <span className="anniversary__text">
-              <span className="anniversary__title">
-                {state.reminder.enabled ? `每 ${state.reminder.intervalMinutes / 60} 小时提醒` : '提醒已关闭'}
-              </span>
-              <span className="anniversary__sub">
-                {stats.nextReminderAt
-                  ? `预计下次 ${timeHM(stats.nextReminderAt)} · 提醒仅作辅助，请以宝宝的饥饿信号为准`
-                  : '记录一次喂养后自动开始计时'}
-              </span>
-            </span>
-            <Icon name="chevronRight" size={15} style={{ color: 'var(--ink-3)' }} />
-          </button>
-        </section>
+        <FeedStatsPanel
+          stats={stats}
+          week={week}
+          reminder={state.reminder}
+          onOpenReminders={() => navigate('reminders')}
+        />
 
         <section style={{ marginTop: 28 }}>
           <SectionHead title="喂养记录" en="History" />
           {groups.length === 0 ? (
             <div className="empty">还没有喂养记录。从上方选择方式，记录第一餐。</div>
           ) : (
-            groups.map((g) => (
-              <div key={g.label} style={{ marginBottom: 8 }}>
-                <div className="divider-label" style={{ margin: '10px 0 4px' }}>
-                  {g.label}
-                </div>
-                <div className="records">
-                  {g.items.map((r) => (
-                    <div key={r.id} className="record">
-                      <span className="record__time">{timeHM(r.startedAt)}</span>
-                      <div className="record__main">
-                        <div className="record__title">{recordTitle(r)}</div>
-                        <div className="record__meta">
-                          {intervalMap.has(r.id) ? `距上次 ${shortSpan(intervalMap.get(r.id)!)}` : '当日首餐'}
-                          {' · '}
-                          {r.author}
-                          {r.note ? ` · ${r.note}` : ''}
-                        </div>
-                      </div>
-                      <div className="record__tools">
-                        <button aria-label="编辑记录" onClick={() => startEdit(r)}>
-                          <Icon name="edit" size={14} />
-                        </button>
-                        <button aria-label="删除记录" onClick={() => setDeleting(r)}>
-                          <Icon name="trash" size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))
+            <RecordGroups
+              groups={groups}
+              intervalMap={intervalMap}
+              onEdit={startEdit}
+              onDelete={setDeleting}
+              compact
+            />
           )}
           {sorted.length > 3 ? (
             <button
@@ -694,20 +504,16 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
         <p className="about-note">
           喂养提醒与统计只是家庭记录的辅助工具，不替代宝宝的饥饿信号，也不构成医疗建议。
         </p>
-          </>
-        ) : null}
       </div>
 
       {showComposer ? (
-      <div className={`save-bar${quick ? ' save-bar--quick' : ''}`}>
+      <div className="save-bar">
         {!canSave ? (
-          <div className="save-bar__hint">
-            {quick ? '选择方式，填写奶量或开始计时后保存' : '选择方式后，记录时长或奶量即可保存'}
-          </div>
+          <div className="save-bar__hint">选择方式后，记录时长或奶量即可保存</div>
         ) : null}
         <button className="btn btn--primary btn--full" onClick={save} disabled={!canSave}>
           <Icon name="check" size={17} />
-          {editing ? '保存修改' : quick ? '保存这次喂养' : '保存记录'}
+          {editing ? '保存修改' : '保存记录'}
           {canSave ? (
             <span style={{ fontWeight: 400, opacity: 0.7, fontSize: 'calc(12px * var(--type-scale, 1))' }}>
               {[hasBreast
@@ -740,37 +546,12 @@ export default function FeedPage({ mode = 'full' }: { mode?: 'full' | 'quick' })
             <span style={{ width: 36 }} />
           </header>
           <div className="history-screen__body">
-            {groupRecords(sorted).map((g) => (
-              <div key={g.label} style={{ marginBottom: 10 }}>
-                <div className="divider-label" style={{ margin: '14px 0 4px' }}>
-                  {g.label}
-                </div>
-                <div className="records">
-                  {g.items.map((r) => (
-                    <div key={r.id} className="record">
-                      <span className="record__time">{timeHM(r.startedAt)}</span>
-                      <div className="record__main">
-                        <div className="record__title">{recordTitle(r)}</div>
-                        <div className="record__meta">
-                          {intervalMap.has(r.id) ? `距上次 ${shortSpan(intervalMap.get(r.id)!)}` : '当日首餐'}
-                          {' · '}
-                          {r.author}
-                          {r.note ? ` · ${r.note}` : ''}
-                        </div>
-                      </div>
-                      <div className="record__tools">
-                        <button aria-label="编辑记录" onClick={() => startEdit(r)}>
-                          <Icon name="edit" size={14} />
-                        </button>
-                        <button aria-label="删除记录" onClick={() => setDeleting(r)}>
-                          <Icon name="trash" size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+            <RecordGroups
+              groups={groupRecords(sorted)}
+              intervalMap={intervalMap}
+              onEdit={startEdit}
+              onDelete={setDeleting}
+            />
           </div>
         </div>
       ) : null}

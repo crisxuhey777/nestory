@@ -40,3 +40,11 @@ shots/*-now.png
 shots/*-current.png
 shots/*-check.png
 shots/*drag*.png
+
+# e2e artifacts (regenerated on every run)
+shots/e2e-*.png
+shots/back-transition.png
+shots/exit-confirm.png
+
+# vision tooling run artifacts
+.dsh-vision-router/artifacts/.runs/

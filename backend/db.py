@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from pathlib import Path
@@ -139,6 +140,20 @@ SCHEMA = [
       CONSTRAINT fk_hstate_household FOREIGN KEY (household_id) REFERENCES households (id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    # 覆盖写之前的存档：重置、加入新家庭前各留一份，出事能查回来。
+    # 故意不加外键 —— 家庭被解散后存档仍要留着。
+    """
+    CREATE TABLE IF NOT EXISTS state_backups (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      household_id BIGINT UNSIGNED NOT NULL,
+      user_id BIGINT UNSIGNED NULL,
+      reason VARCHAR(24) NOT NULL,
+      state_json MEDIUMTEXT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_backup_household (household_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 # 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加字段，必须自己检查。
@@ -212,6 +227,22 @@ def connect() -> pymysql.connections.Connection:
         read_timeout=10,
         write_timeout=10,
     )
+
+
+@contextlib.contextmanager
+def transaction(conn):
+    """显式事务：调用方用 ``with db.transaction(conn):`` 包住多条写操作。
+
+    连接默认 autocommit=True，这里显式 BEGIN，异常回滚，正常结束提交。
+    """
+    conn.begin()
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
 
 
 def init_schema() -> None:

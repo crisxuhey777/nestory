@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react'
 import { ONBOARDING } from '../data/config'
 import { uid, useStore } from '../data/store'
-import { api } from '../data/api'
 import type { AppState } from '../data/types'
-import { compressImage, uploadAvatar } from '../lib/media'
+import { uploadAvatar, uploadPhoto } from '../lib/media'
 import { toISODate } from '../lib/date'
 import { navigate } from '../lib/route'
 import { Icon } from '../brand/icons'
@@ -19,7 +18,8 @@ export default function Onboarding() {
   const [gender, setGender] = useState<'girl' | 'boy' | ''>('')
   const [interval, setIntervalMinutes] = useState(180)
   const [remind, setRemind] = useState(true)
-  const [photo, setPhoto] = useState<string | null>(null)
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState('')
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [avatarPreview, setAvatarPreview] = useState('')
   const [busy, setBusy] = useState(false)
@@ -44,18 +44,26 @@ export default function Onboarding() {
     let patch: Partial<AppState> = {}
     if (!skip) {
       const now = Date.now()
-      const nextPhoto =
-        photo && step >= 1
-          ? {
-              id: uid('ph'),
-              src: photo,
-              thumb: photo,
-              at: now,
-              caption: ONBOARDING.photoCaption,
-              author: user.nickname || '我',
-              kind: 'photo' as const,
-            }
-          : null
+      // 照片走媒体库，state 里只存短地址：base64 既不进 AppState，也能进回收站。
+      let uploaded: { url: string; thumb: string } | null = null
+      if (photoFile && step >= 1) {
+        try {
+          uploaded = await uploadPhoto(photoFile)
+        } catch {
+          toast('照片没能上传，先跳过这张，之后可以在相册里补一张')
+        }
+      }
+      const nextPhoto = uploaded
+        ? {
+            id: uid('ph'),
+            src: uploaded.url,
+            thumb: uploaded.thumb,
+            at: now,
+            caption: ONBOARDING.photoCaption,
+            author: user.nickname || '我',
+            kind: 'photo' as const,
+          }
+        : null
       patch = {
         baby: {
           ...state.baby,
@@ -73,14 +81,8 @@ export default function Onboarding() {
       }
     }
 
-    // 引导是账号真正开始的节点，先显式落库，避免用户在 800ms 防抖结束前刷新又回到引导
-    try {
-      await api.saveState({ ...state, ...patch, onboarded: true } as AppState)
-    } catch {
-      toast('设置没能保存，请稍后再试一次')
-      setBusy(false)
-      return
-    }
+    // 交给 store 的自动保存（800ms 防抖 + 卸载/关页补发），不再额外 PUT 一次，
+    // 否则同一份状态会被连着写两遍。
     dispatch({ type: 'completeOnboarding', patch })
     if (avatarUrl) {
       dispatch({ type: 'updateFamilyMember', id: state.viewerId, patch: { avatarUrl } })
@@ -88,16 +90,11 @@ export default function Onboarding() {
     navigate('home', undefined, true)
   }
 
-  const pickPhoto = async (file: File | undefined) => {
+  const pickPhoto = (file: File | undefined) => {
     if (!file) return
-    setBusy(true)
-    try {
-      setPhoto(await compressImage(file))
-    } catch {
-      toast('这张照片没能读取，换一张试试')
-    } finally {
-      setBusy(false)
-    }
+    if (photoPreview) URL.revokeObjectURL(photoPreview)
+    setPhotoFile(file)
+    setPhotoPreview(URL.createObjectURL(file))
   }
 
   const pickAvatar = (file: File | undefined) => {
@@ -235,11 +232,14 @@ export default function Onboarding() {
                   className="sr-only"
                   type="file"
                   accept="image/*"
-                  onChange={(event) => void pickPhoto(event.target.files?.[0])}
+                  onChange={(event) => {
+                    pickPhoto(event.target.files?.[0])
+                    event.target.value = ''
+                  }}
                 />
-                {photo ? (
+                {photoPreview ? (
                   <button className="onboarding__shot" type="button" onClick={() => fileRef.current?.click()}>
-                    <img src={photo} alt="第一张照片预览" />
+                    <img src={photoPreview} alt="第一张照片预览" />
                     <span>换一张</span>
                   </button>
                 ) : (

@@ -79,7 +79,7 @@ export default function BootScreen({
               color: 'var(--ink-3)',
             }}
           >
-            Local backend
+            Family cloud
           </div>
         </div>
 

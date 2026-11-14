@@ -25,10 +25,14 @@ export type FamilyMemberDto = {
   joinedAt: string | null
 }
 
+export type MergedCounts = Partial<Record<'feeds' | 'sleeps' | 'diapers' | 'growths' | 'milestones' | 'photos' | 'trash', number>>
+
 export type FamilyPayload = {
   household: { id: number; name: string; createdAt?: string | null }
   me: { userId: string; permission: Permission; isAdmin: boolean }
   members: FamilyMemberDto[]
+  /** 加入家庭时，自己原来的记录被并进新家庭的条数（按列表） */
+  merged?: MergedCounts
 }
 
 export type InvitePayload = { token: string; permission: Permission; expiresAt: string; days: number }
@@ -51,6 +55,8 @@ export type MediaPresignInput = {
   height?: number
   durationSec?: number
   sha256?: string
+  /** 换头像上传：只读成员也可以，后端只允许 photo */
+  purpose?: 'avatar'
   /** 强制走应用服务器中转（本地驱动或对象存储临时不可用时） */
   proxy?: boolean
 }
@@ -112,13 +118,6 @@ export class ApiError extends Error {
   }
 }
 
-export function unwrapState(payload: unknown): unknown {
-  if (payload && typeof payload === 'object' && 'state' in payload) {
-    return (payload as { state: unknown }).state
-  }
-  return payload
-}
-
 export function isAppState(value: unknown): value is AppState {
   if (!value || typeof value !== 'object') return false
   const state = value as Partial<AppState>
@@ -149,30 +148,45 @@ export function isAppState(value: unknown): value is AppState {
   )
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** `timeoutMs` 覆盖默认 20s：AI 生成最长要 40 秒以上。 */
+type ApiInit = RequestInit & { timeoutMs?: number }
+
+async function request<T>(path: string, init: ApiInit = {}): Promise<T> {
+  const { timeoutMs = 20_000, signal: outerSignal, ...rest } = init
   const controller = new AbortController()
-  const timer = globalThis.setTimeout(() => controller.abort(), 20_000)
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs)
+  // 调用方可以传自己的 signal（例如关掉弹窗时取消 AI 请求）。
+  // 调用方取消和超时是两回事，错误码要分开。
+  const forwardAbort = () => controller.abort()
+  if (outerSignal) {
+    if (outerSignal.aborted) controller.abort()
+    else outerSignal.addEventListener('abort', forwardAbort, { once: true })
+  }
   let res: Response
   let text: string
   try {
     res = await fetch(path, {
       credentials: 'same-origin',
-      ...init,
+      ...rest,
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(init.headers ?? {}),
+        ...(rest.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(rest.headers ?? {}),
       },
     })
     text = await res.text()
   } catch {
+    if (outerSignal?.aborted) {
+      throw new ApiError(0, 'aborted', '请求已取消')
+    }
     if (controller.signal.aborted) {
       throw new ApiError(0, 'timeout', '请求超时，请稍后再试')
     }
     throw new ApiError(0, 'network', '暂时连不上 Nestory，请稍后再试')
   } finally {
     globalThis.clearTimeout(timer)
+    outerSignal?.removeEventListener('abort', forwardAbort)
   }
 
   let payload: unknown = null
@@ -193,6 +207,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   return payload as T
+}
+
+/**
+ * 页面里所有 POST /api/ai/* 都走这里：统一超时、统一 ApiError、统一 credentials。
+ * 生成类接口本身要几十秒，所以默认放宽到 90 秒。
+ */
+export async function aiPost<T>(path: string, body: unknown, timeoutMs = 90_000): Promise<T> {
+  return request<T>(path, { method: 'POST', body: JSON.stringify(body), timeoutMs })
 }
 
 function session(payload: { user: User; state: unknown }): Session {

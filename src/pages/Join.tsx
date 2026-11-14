@@ -58,9 +58,14 @@ export default function JoinPage() {
     if (busy || !token) return
     setBusy(true)
     try {
-      await api.joinFamily(token)
+      const result = await api.joinFamily(token)
       await reload()
-      toast('已加入这个家庭，之后看到的记录会和家人同步')
+      const moved = Object.values(result.merged ?? {}).reduce((sum, n) => sum + (n ?? 0), 0)
+      toast(
+        moved
+          ? `已加入这个家庭 · 你加入前的 ${moved} 条记录已一并带过来`
+          : '已加入这个家庭，之后看到的记录会和家人同步',
+      )
       navigate('home', undefined, true)
     } catch (error) {
       const message = error instanceof Error ? error.message : '加入失败，请稍后再试'
@@ -90,6 +95,7 @@ export default function JoinPage() {
             <h2 className="join-title">{view.preview.household.name}</h2>
             <p className="about-copy">
               {view.preview.inviter} 邀请你一起记录宝宝的成长。加入后，你们会看到同一份喂养、睡眠与照片。
+              你加入前自己记的内容会一并并进这个家庭，不会丢。
             </p>
             <p className="join-perm">
               {LABEL[view.preview.permission]} · 邀请 {new Date(view.preview.expiresAt).toLocaleDateString('zh-CN')} 前有效

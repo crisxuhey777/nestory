@@ -7,14 +7,10 @@ import type { TrashItemDto } from '../data/api'
 import { getRouteFrom, navigate } from '../lib/route'
 import type { Route } from '../lib/route'
 import { monthDay } from '../lib/date'
+import { mediaIdsOf } from '../lib/media'
 import type { Photo, TrashItem } from '../data/types'
 
 const DAY = 86_400_000
-
-function mediaIdOf(src: string): string | null {
-  const match = /\/api\/media\/blob\/([A-Za-z0-9_-]+)/.exec(src)
-  return match ? match[1] : null
-}
 
 function daysLeft(expiresAt: string | null): number {
   const at = expiresAt ? Date.parse(expiresAt) : NaN
@@ -48,7 +44,7 @@ export default function TrashPage() {
   const local = useMemo(() => {
     const map = new Map<string, Photo>()
     for (const entry of state.trash ?? []) {
-      const id = mediaIdOf(entry.src)
+      const id = mediaIdsOf(entry.src)[0]
       if (id) map.set(id, entry)
     }
     return map
@@ -58,15 +54,40 @@ export default function TrashPage() {
     const known = new Set((items ?? []).map((item) => item.id))
     const now = Date.now()
     return (state.trash ?? []).filter((entry) => {
-      const id = mediaIdOf(entry.src)
+      const id = mediaIdsOf(entry.src)[0]
       if (id && known.has(id)) return false
       return entry.deletedAt + 7 * DAY > now
     })
   }, [items, state.trash])
 
-  const restoreLocal = (entry: TrashItem) => {
-    dispatch({ type: 'restorePhotos', ids: [entry.id] })
-    toast('已恢复到相册')
+  // 只有本地元数据、服务端回收站列表里没有的条目：恢复也必须先让服务端解除软删，
+  // 否则 7 天后对象被清掉，相册里只会剩一张裂图。
+  const restoreLocal = async (entry: TrashItem) => {
+    if (busyId) return
+    const id = mediaIdsOf(entry.src, entry.thumb)[0]
+    if (!id) {
+      dispatch({ type: 'restorePhotos', ids: [entry.id] })
+      toast('已恢复到相册（这张照片没有云端副本）')
+      return
+    }
+    setBusyId(entry.id)
+    try {
+      await mediaApi.restore(id)
+      dispatch({ type: 'restorePhotos', ids: [entry.id] })
+      toast('已恢复到相册')
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === 'trash_expired' || err.status === 410)) {
+        dispatch({ type: 'dropTrash', ids: [entry.id] })
+        toast('这张照片已经超过 7 天，自动删除了')
+      } else if (err instanceof ApiError && err.status === 404) {
+        dispatch({ type: 'restorePhotos', ids: [entry.id] })
+        toast('已恢复到相册，但这张照片可能没有云端副本')
+      } else {
+        toast(err instanceof ApiError ? err.message : '恢复失败，稍后再试')
+      }
+    } finally {
+      setBusyId('')
+    }
   }
   const restore = async (item: TrashItemDto) => {
     if (busyId) return
@@ -196,8 +217,13 @@ export default function TrashPage() {
                       {entry.author || '家人'} · 还剩 {left} 天
                     </span>
                   </div>
-                  <button type="button" className="btn btn--quiet trash-card__restore" onClick={() => restoreLocal(entry)}>
-                    恢复
+                  <button
+                    type="button"
+                    className="btn btn--quiet trash-card__restore"
+                    disabled={!!busyId}
+                    onClick={() => void restoreLocal(entry)}
+                  >
+                    {busyId === entry.id ? '恢复中' : '恢复'}
                   </button>
                 </div>
               )

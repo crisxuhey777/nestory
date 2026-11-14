@@ -28,7 +28,17 @@ from pathlib import Path
 import db
 import storage
 
-TABLES = ("users", "sessions", "user_state", "media")
+TABLES = (
+    # 家庭表在前：数据现在存在 household_state 里，早先只备份这四张用户表会漏掉全家的记录。
+    "households",
+    "household_members",
+    "household_state",
+    "invites",
+    "users",
+    "sessions",
+    "user_state",
+    "media",
+)
 BACKUP_DIR = "backups"
 FORMAT_VERSION = 1
 
@@ -62,7 +72,7 @@ def dump() -> dict:
     payload = {
         "format": FORMAT_VERSION,
         "createdAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "database": db.config().get("name"),
+        "database": db.config().get("database"),
         "tables": {},
     }
     try:
@@ -129,6 +139,15 @@ def _value(cell):
     return cell
 
 
+def _restore_order(payload_tables) -> list[str]:
+    """只恢复备份里真的有的表。
+
+    老备份（format 1，只有 4 张用户表）缺 household_* 时，如果照样按 TABLES 清表，
+    会把现在真正存数据的 household_state 清空再灌不回去——等于把用户记录删了。
+    """
+    return [table for table in TABLES if table in payload_tables]
+
+
 def restore(key: str) -> int:
     request = storage.download(key)
     data = json.loads(gzip.decompress(request).decode("utf-8"))
@@ -136,7 +155,9 @@ def restore(key: str) -> int:
         raise SystemExit(f"备份格式不匹配: {data.get('format')}")
 
     conn = db.connect()
-    order = list(TABLES)
+    order = _restore_order(data.get("tables") or {})
+    if not order:
+        raise SystemExit("备份里没有任何可恢复的表")
     try:
         # db.connect() 默认 autocommit=True，直接清表会让每条语句立刻生效，
         # 中途失败就留下一个被清空且无法回滚的库。恢复必须显式关掉自动提交。

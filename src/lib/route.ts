@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from 'react'
 export type Route =
   | 'home'
   | 'feed'
-  | 'record'
   | 'growth'
   | 'album'
   | 'profile'
@@ -18,7 +17,6 @@ export type Route =
 const ROUTES: Route[] = [
   'home',
   'feed',
-  'record',
   'growth',
   'album',
   'profile',
@@ -34,7 +32,6 @@ const ROUTES: Route[] = [
 const TITLES: Record<Route, string> = {
   home: 'Nestory · 家的小窝，成长的故事',
   feed: '喂养中心 · Nestory',
-  record: '记录喂养 · Nestory',
   growth: '成长记录 · Nestory',
   album: '成长相册 · Nestory',
   profile: '我的家庭 · Nestory',
@@ -87,6 +84,7 @@ export function navigate(route: Route, from?: Route, replace = false) {
     const nextState = { ...(history.state ?? {}) } as Record<string, unknown>
     delete nextState.nestoryExitGuard
     delete nextState.nestoryExitGuardPath
+    delete nextState[OVERLAY_KEY]
     history.pushState(nextState, '', next)
     trail.push(route)
     depth += 1
@@ -115,12 +113,21 @@ export function goBack(route: Route, from?: Route) {
   if (trail[depth - 1] === route) {
     const before = window.location.hash
     pendingMode = 'back'
-    history.back()
-    // 有些入口（刷新、直接打开二级页）会留下同 URL 的历史条目，
-    // 此时 back() 不会改变 hash；短暂等待后改为替换到上一级。
-    window.setTimeout(() => {
+    let settled = false
+    const settle = () => {
+      if (settled) return
+      settled = true
+      window.removeEventListener('popstate', onPop)
+      // 有些入口（刷新、直接打开二级页）会留下同 URL 的历史条目，
+      // 此时 back() 不会改变 hash，改为替换到上一级。
       if (window.location.hash === before) replaceToParent()
-    }, 160)
+    }
+    const onPop = () => window.setTimeout(settle, 0)
+    window.addEventListener('popstate', onPop)
+    history.back()
+    // 兜底：万一浏览器没有派发 popstate（同 URL 条目在某些内核里静默），
+    // 300ms 后自己判断，不再用固定 160ms 猜测页面加载速度。
+    window.setTimeout(settle, 300)
     return
   }
 
@@ -149,6 +156,22 @@ export function restoreRoute(route: Route) {
   history.replaceState(history.state, '', next)
   pendingMode = 'none'
   emit()
+}
+
+const OVERLAY_KEY = 'nestoryOverlay'
+
+/** 页内浮层（如相册「查看全部」）压一条同 URL 历史，返回键先关浮层而不是退页。 */
+export function pushOverlay(name: string) {
+  const state = { ...((history.state ?? {}) as Record<string, unknown>), [OVERLAY_KEY]: name }
+  history.pushState(state, '', window.location.hash || '#/home')
+}
+
+/** 关浮层：只有当前条目确实是它压出来的才交给浏览器回退，返回 false 表示没压过。 */
+export function exitOverlay(name: string): boolean {
+  const state = history.state as Record<string, unknown> | null
+  if (state?.[OVERLAY_KEY] !== name) return false
+  history.back()
+  return true
 }
 
 /** 当前地址对应的路由（供系统返回等浏览器事件读取）。 */

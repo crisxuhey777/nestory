@@ -127,6 +127,30 @@ def state_row(conn, household_id: int) -> dict | None:
         return cur.fetchone()
 
 
+def load_state(conn, household_id: int) -> dict | None:
+    """读家庭那份 state；坏了当没有，别让一次解析失败挡住加入家庭。"""
+    row = state_row(conn, household_id)
+    raw = (row or {}).get("state_json")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        log.warning("household_state unreadable household=%s", household_id)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def backup_state(conn, household_id: int, user_id: int | None, reason: str, state: dict) -> None:
+    """覆盖写之前留一份存档（重置、加入家庭前）。只影响 state_backups，不动线上数据。"""
+    payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO state_backups (household_id, user_id, reason, state_json) VALUES (%s, %s, %s, %s)",
+            (household_id, user_id, reason[:24], payload),
+        )
+
+
 def save_state(conn, household_id: int, state: dict) -> None:
     payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
     with conn.cursor() as cur:
@@ -289,8 +313,123 @@ def _is_solo(conn, household_id: int, user_id: int) -> bool:
         return bool(row) and row["permission"] == "admin"
 
 
-def _dissolve(conn, household_id: int, user_id: int, target_household_id: int) -> None:
-    """把空壳家庭删掉，历史媒体挪进新家庭，避免加入后照片找不回来。"""
+RECORD_LISTS = ("feeds", "sleeps", "diapers", "growths", "milestones", "photos", "trash")
+# 每条记录按哪个字段排序（显示顺序：新的在前）
+RECORD_TIME_KEYS = {
+    "feeds": "startedAt",
+    "sleeps": "startedAt",
+    "diapers": "at",
+    "growths": "at",
+    "milestones": "at",
+    "photos": "at",
+    "trash": "deletedAt",
+}
+
+
+def _ts_key(name: str) -> str:
+    return RECORD_TIME_KEYS.get(name, "at")
+
+
+def _time_of(item: dict, key: str) -> float:
+    value = item.get(key)
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _merge_records(base: list, extra: list, time_key: str) -> list:
+    """按 id 去重合并，保持「新的在前」的顺序。"""
+    merged = [item for item in base if isinstance(item, dict)]
+    seen = {item.get("id") for item in merged if item.get("id")}
+    for item in extra:
+        if not isinstance(item, dict):
+            continue
+        rid = item.get("id")
+        if rid and rid in seen:
+            continue
+        if rid:
+            seen.add(rid)
+        merged.append(item)
+    merged.sort(key=lambda item: _time_of(item, time_key), reverse=True)
+    return merged
+
+
+def _has_records(state: dict) -> bool:
+    if any(state.get(name) for name in RECORD_LISTS):
+        return True
+    archived = state.get("archived")
+    return isinstance(archived, dict) and any(archived.get(name) for name in RECORD_LISTS)
+
+
+def merge_states(target: dict | None, incoming: dict) -> tuple[dict, dict]:
+    """把加入者原有记录并进目标家庭，返回（合并后的 state，各列表新增条数）。
+
+    规则：目标没有 state 时直接接手（保留它的宝宝档案）；否则按 id 并集，
+    宝宝档案、提醒设置、成员列表一律以目标家庭为准。
+    """
+    counts: dict[str, int] = {}
+    if not target:
+        merged = incoming
+        for name in RECORD_LISTS:
+            merged[name] = _merge_records([], merged.get(name) or [], _ts_key(name))
+        counts = {name: len(merged.get(name) or []) for name in RECORD_LISTS}
+        return merged, {key: value for key, value in counts.items() if value}
+
+    merged = dict(target)
+    for name in RECORD_LISTS:
+        extra = incoming.get(name)
+        if not isinstance(extra, list) or not extra:
+            continue
+        before = len(merged.get(name) or [])
+        merged[name] = _merge_records(merged.get(name) or [], extra, _ts_key(name))
+        added = len(merged[name]) - before
+        if added:
+            counts[name] = added
+
+    arch_target = merged.get("archived") if isinstance(merged.get("archived"), dict) else {}
+    arch_incoming = incoming.get("archived") if isinstance(incoming.get("archived"), dict) else {}
+    if arch_incoming:
+        arch = dict(arch_target)
+        for name in RECORD_LISTS:
+            extra = arch_incoming.get(name)
+            if not isinstance(extra, list) or not extra:
+                continue
+            arch[name] = _merge_records(arch.get(name) or [], extra, _ts_key(name))
+        merged["archived"] = arch
+
+    hero = list(merged.get("heroPhotoIds") or [])
+    for photo_id in incoming.get("heroPhotoIds") or []:
+        if photo_id not in hero:
+            hero.append(photo_id)
+    merged["heroPhotoIds"] = hero
+
+    baby = merged.get("baby") if isinstance(merged.get("baby"), dict) else {}
+    income_baby = incoming.get("baby") if isinstance(incoming.get("baby"), dict) else {}
+    if not _s(baby.get("name")) and not _s(baby.get("birthday")) and income_baby:
+        merged["baby"] = income_baby
+
+    return merged, counts
+
+
+def _dissolve(conn, household_id: int, user_id: int, target_household_id: int) -> dict:
+    """解散只有自己的空壳家庭：记录并进新家庭、历史媒体挪过去。
+
+    以前这里直接删 household_state，加入家庭的人会静默丢掉自己记过的
+    喂养/睡眠/照片；现在先存档、再合并，最后才删。
+    """
+    merged_counts: dict = {}
+    source = load_state(conn, household_id)
+    if source and _has_records(source):
+        backup_state(conn, household_id, user_id, "join", source)
+        target = load_state(conn, target_household_id)
+        merged, counts = merge_states(target, source)
+        save_state(conn, target_household_id, merged)
+        merged_counts = counts
+        log.info(
+            "solo state merged household=%s -> %s counts=%s",
+            household_id,
+            target_household_id,
+            merged_counts,
+        )
+
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE media SET household_id = %s WHERE household_id = %s",
@@ -300,6 +439,29 @@ def _dissolve(conn, household_id: int, user_id: int, target_household_id: int) -
         cur.execute("DELETE FROM household_members WHERE household_id = %s AND user_id = %s", (household_id, user_id))
         cur.execute("DELETE FROM households WHERE id = %s", (household_id,))
     log.info("solo household dissolved household=%s user=%s -> %s", household_id, user_id, target_household_id)
+    return merged_counts
+
+
+def _claim_invite(conn, token: str, user_id: int) -> dict:
+    """原子核销邀请：UPDATE 命中才算抢到，抢不到再查原因给准确提示。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE invites SET used_at = NOW(), used_by = %s
+            WHERE token = %s AND used_at IS NULL AND expires_at > NOW()
+            """,
+            (user_id, token),
+        )
+        claimed = cur.rowcount > 0
+        cur.execute("SELECT * FROM invites WHERE token = %s", (token,))
+        row = cur.fetchone()
+    if claimed and row:
+        return row
+    if not row:
+        raise _err(404, "invalid_invite", "这个邀请链接不存在")
+    if row.get("used_at"):
+        raise _err(410, "invite_used", "这个邀请链接已经被使用过了")
+    raise _err(410, "invite_expired", "这个邀请链接已经过期，请让家人重新发一个")
 
 
 def join(conn, user: dict, token: str) -> dict:
@@ -308,41 +470,40 @@ def join(conn, user: dict, token: str) -> dict:
         raise _err(400, "missing_token", "邀请链接不完整")
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM invites WHERE token = %s", (token,))
-        invite = cur.fetchone()
-    if not invite:
+        preview = cur.fetchone()
+    if not preview:
         raise _err(404, "invalid_invite", "这个邀请链接不存在")
-    if invite.get("used_at"):
-        raise _err(410, "invite_used", "这个邀请链接已经被使用过了")
-    if invite["expires_at"] <= datetime.now():
-        raise _err(410, "invite_expired", "这个邀请链接已经过期，请让家人重新发一个")
-
     existing = household_for(conn, user["id"])
-    if existing:
-        if existing["id"] == invite["household_id"]:
-            return payload(conn, user)
-        # 注册时每个人都自动有一个「只有自己」的家庭；加入别人时把它解散。
-        if not _is_solo(conn, existing["id"], user["id"]):
-            raise _err(409, "already_in_family", "这个账号已经在一个家庭里了")
-        _dissolve(conn, existing["id"], user["id"], invite["household_id"])
+    if existing and existing["id"] == preview["household_id"]:
+        return payload(conn, user)
 
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO household_members (household_id, user_id, permission)
-            VALUES (%s, %s, %s)
-            """,
-            (invite["household_id"], user["id"], invite["permission"]),
-        )
-        cur.execute(
-            "UPDATE invites SET used_at = NOW(), used_by = %s WHERE token = %s AND used_at IS NULL",
-            (user["id"], token),
-        )
-        if cur.rowcount == 0:
-            # 并发下别人先用了这条邀请
-            raise _err(410, "invite_used", "这个邀请链接已经被使用过了")
+    merged: dict = {}
+    # 核销邀请、并入记录、登记成员必须同生共死：任何一步失败都不能留下半套数据。
+    with db.transaction(conn):
+        invite = _claim_invite(conn, token, user["id"])
+        existing = household_for(conn, user["id"])
+        if existing:
+            if existing["id"] == invite["household_id"]:
+                return payload(conn, user)
+            # 注册时每个人都自动有一个「只有自己」的家庭；加入别人时把它解散。
+            if not _is_solo(conn, existing["id"], user["id"]):
+                raise _err(409, "already_in_family", "这个账号已经在一个家庭里了")
+            merged = _dissolve(conn, existing["id"], user["id"], invite["household_id"])
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO household_members (household_id, user_id, permission)
+                VALUES (%s, %s, %s)
+                """,
+                (invite["household_id"], user["id"], invite["permission"]),
+            )
     _backfill(conn, invite["household_id"], user["id"])
     log.info("invite joined household=%s user=%s", invite["household_id"], user["id"])
-    return payload(conn, user)
+    result = payload(conn, user)
+    if merged:
+        result["merged"] = merged
+    return result
 
 
 def update_member(conn, actor_id: int, target_id: int, permission: str) -> dict:

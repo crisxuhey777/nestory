@@ -1,6 +1,6 @@
 import type { IconName } from '../brand/icons'
 
-export type NavRoute = 'home' | 'feed' | 'growth' | 'album' | 'profile' | 'reminders' | 'about' | 'settings' | 'record'
+export type NavRoute = 'home' | 'feed' | 'growth' | 'album' | 'profile' | 'reminders' | 'about' | 'settings'
 export type FeedMethodKey = 'breast' | 'bottle' | 'formula'
 export type PermissionKey = 'admin' | 'edit' | 'read'
 export type FontKey = 'small' | 'normal' | 'large' | 'xlarge'
@@ -21,7 +21,6 @@ export const APP: {
 }
 
 export const API: {
-  state: string
   dailyQuote: string
   aiSummary: string
   aiAnalysis: string
@@ -31,9 +30,7 @@ export const API: {
 }
 
 export const STORAGE_KEYS: {
-  state: string
   prefs: string
-  mediaDb: string
 }
 
 export const NAV_TABS: readonly {

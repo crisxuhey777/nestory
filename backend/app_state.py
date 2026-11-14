@@ -1,6 +1,6 @@
 """把 ``fixtures`` 里的模板换算成前端 ``AppState``（v3）。
 
-这是前端 ``src/data/seed.ts`` 的 Python 版本，逐条对齐：
+这是后端自己的演示数据模板（前端已不再有 ``src/data/seed.ts``），结构与前端约定对齐：
 - 所有时间字段都输出 epoch 毫秒（前端 types.ts 的约定）；
 - 相对时间（minutesAgo / dayOffset）在每次请求时基于「当下」重新计算，
   所以夜间喂奶是「20 分钟前」，而不是写死的某个时刻；

@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { MEDIA_LIMITS, STORAGE_KEYS } from '../data/config'
+import { MEDIA_LIMITS } from '../data/config'
 import type { MediaKind, MediaPresignInput } from '../data/api'
 import { ApiError, api, mediaApi } from '../data/api'
 
@@ -120,9 +119,32 @@ export async function uploadMedia(
 /** 账号头像：512px 方图，上传后把 media id 设为当前账号头像。 */
 export async function uploadAvatar(file: File): Promise<string> {
   const { blob, width, height } = await compressToBlob(file, 512, 0.86)
-  const uploaded = await uploadMedia(blob, 'photo', { width, height })
+  const uploaded = await uploadMedia(blob, 'photo', { width, height, purpose: 'avatar' })
   const { avatarUrl } = await api.setAvatar(uploaded.id)
   return avatarUrl
+}
+
+/** 媒体短地址里的 id；一张照片/视频可能有多个（原图 + 缩略图 + 视频 + Live 片段）。 */
+const MEDIA_URL = /\/api\/media\/blob\/([A-Za-z0-9_-]+)/g
+
+export function mediaIdsOf(...urls: (string | null | undefined)[]): string[] {
+  const ids: string[] = []
+  for (const url of urls) {
+    if (!url) continue
+    MEDIA_URL.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = MEDIA_URL.exec(url))) {
+      if (!ids.includes(match[1])) ids.push(match[1])
+    }
+  }
+  return ids
+}
+
+/** 宝宝头像：512px 方图，只进媒体库，不动当前账号的头像。 */
+export async function uploadBabyAvatar(file: File): Promise<string> {
+  const { blob, width, height } = await compressToBlob(file, 512, 0.86)
+  const uploaded = await uploadMedia(blob, 'photo', { width, height })
+  return uploaded.url
 }
 
 /** 照片：原图（长边 1200）+ 缩略图（长边 480），两张分别上传。 */
@@ -148,62 +170,6 @@ export async function uploadClip(
     uploadMedia(posterBlob, 'photo'),
   ])
   return { url: clip.url, poster: poster.url }
-}
-
-/** Uploaded clips live in IndexedDB; localStorage would overflow after one clip. */
-const DB_NAME = STORAGE_KEYS.mediaDb
-const STORE = 'clips'
-
-let dbPromise: Promise<IDBDatabase> | null = null
-
-function openDB(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise
-  dbPromise = new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB unavailable'))
-      return
-    }
-    const request = indexedDB.open(DB_NAME, 1)
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE)
-    }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error ?? new Error('IndexedDB failed'))
-  })
-  return dbPromise
-}
-
-export async function putClip(id: string, blob: Blob): Promise<void> {
-  const db = await openDB()
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put(blob, id)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error ?? new Error('Could not store clip'))
-  })
-}
-
-export async function getClip(id: string): Promise<Blob | undefined> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly')
-    const request = tx.objectStore(STORE).get(id)
-    request.onsuccess = () => resolve(request.result as Blob | undefined)
-    request.onerror = () => reject(request.error ?? new Error('Could not read clip'))
-  })
-}
-
-const urlCache = new Map<string, string>()
-
-export async function clipURL(id: string): Promise<string> {
-  const cached = urlCache.get(id)
-  if (cached) return cached
-  const blob = await getClip(id)
-  if (!blob) return ''
-  const url = URL.createObjectURL(blob)
-  urlCache.set(id, url)
-  return url
 }
 
 export type VideoInfo = { poster: string; durationSec: number }
@@ -263,35 +229,6 @@ export async function inspectVideo(file: File): Promise<VideoInfo> {
   } finally {
     URL.revokeObjectURL(url)
   }
-}
-
-/** Resolve an uploaded clip id (or a static demo url) into a playable src. */
-export function useClipURL(videoId?: string, video?: string): string {
-  const [url, setUrl] = useState(video ?? '')
-
-  useEffect(() => {
-    let alive = true
-    if (video) {
-      setUrl(video)
-      return
-    }
-    if (!videoId) {
-      setUrl('')
-      return
-    }
-    clipURL(videoId)
-      .then((next) => {
-        if (alive) setUrl(next)
-      })
-      .catch(() => {
-        if (alive) setUrl('')
-      })
-    return () => {
-      alive = false
-    }
-  }, [videoId, video])
-
-  return url
 }
 
 export function formatClipLength(sec?: number): string {

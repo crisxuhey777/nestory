@@ -38,7 +38,6 @@ function Shell() {
       >
         {route === 'home' ? <HomePage /> : null}
         {route === 'feed' ? <FeedPage /> : null}
-        {route === 'record' ? <FeedPage mode="quick" /> : null}
         {route === 'growth' ? <GrowthPage /> : null}
         {route === 'album' ? <AlbumPage /> : null}
         {route === 'profile' ? <ProfilePage /> : null}

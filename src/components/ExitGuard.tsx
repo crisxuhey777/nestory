@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { currentRoute, restoreRoute, TAB_ROUTES } from '../lib/route'
 import type { Route } from '../lib/route'
 import { Sheet } from './Sheet'
+import { closeTopSheet, hasOpenSheet } from '../lib/sheets'
 
 type GuardState = { nestoryExitGuard?: boolean } | null
 
@@ -18,7 +19,6 @@ export default function ExitGuard({ route }: { route: Route }) {
   const allowExit = useRef(false)
   const prevRoot = useRef(TAB_ROUTES.includes(route))
   const prevRoute = useRef(route)
-  const restoreTo = useRef<Route | null>(null)
 
   const isRoot = TAB_ROUTES.includes(route)
 
@@ -44,7 +44,6 @@ export default function ExitGuard({ route }: { route: Route }) {
     // 页面已经切换（例如确认框之外的跳转），退出确认不应跨页残留
     if (openRef.current) {
       setOpen(false)
-      restoreTo.current = null
     }
   }, [isRoot, route])
 
@@ -57,10 +56,9 @@ export default function ExitGuard({ route }: { route: Route }) {
       const guarded = Boolean((history.state as GuardState)?.nestoryExitGuard)
 
       const now = currentRoute()
-      const backdrop = document.querySelector('.sheet-backdrop') as HTMLElement | null
-      if (atRoot && wasRoot && !guarded && backdrop) {
+      if (atRoot && wasRoot && !guarded && hasOpenSheet()) {
         // 有抽屉打开时，返回先关抽屉，不触发退出
-        backdrop.click()
+        closeTopSheet()
         restoreRoute(prevRoute.current)
         pushGuard()
         return
@@ -70,7 +68,6 @@ export default function ExitGuard({ route }: { route: Route }) {
         const before = now
         // 刚消费掉根层哨兵：这是「在主界面按了返回」
         restoreRoute(before)
-        restoreTo.current = null
         setOpen(true)
         return
       }
@@ -84,16 +81,11 @@ export default function ExitGuard({ route }: { route: Route }) {
 
   const cancel = () => {
     setOpen(false)
-    if (restoreTo.current) {
-      restoreRoute(restoreTo.current)
-      restoreTo.current = null
-    }
     pushGuard()
   }
 
   const confirm = () => {
     allowExit.current = true
-    restoreTo.current = null
     setOpen(false)
     history.back()
   }

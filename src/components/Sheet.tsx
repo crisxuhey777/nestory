@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { registerSheet } from '../lib/sheets'
 
 export function Sheet({
   open,
@@ -45,6 +46,14 @@ export function Sheet({
     return () => {
       if (closeTimer.current) window.clearTimeout(closeTimer.current)
     }
+  }, [open])
+
+  // 登记给返回键处理：有抽屉开着时，返回先关抽屉而不是弹退出确认
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    if (!open) return
+    return registerSheet(() => closeRef.current())
   }, [open])
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {

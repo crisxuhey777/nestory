@@ -28,6 +28,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -35,7 +36,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -44,7 +45,6 @@ import ai_insights  # noqa: E402
 import auth  # noqa: E402
 import db  # noqa: E402
 import family  # noqa: E402
-import fixtures  # noqa: E402
 import llm  # noqa: E402
 import logsetup  # noqa: E402
 import media as media_store  # noqa: E402
@@ -60,6 +60,101 @@ _CAPTION_HITS: dict[str, list[float]] = {}
 _CAPTION_LOCK = threading.Lock()
 DESCRIBE_LIMIT = 24
 _DESCRIBE_HITS: dict[str, list[float]] = {}
+
+# 登录失败节流：同一「邮箱 + 来源 IP」15 分钟内失败 10 次就先停一下，
+# 否则 PBKDF2 260000 轮会被当成免费的离线爆破靶子（还能顺手打满 CPU）。
+LOGIN_LIMIT = 10
+LOGIN_WINDOW = 15 * 60.0
+_LOGIN_HITS: dict[str, list[float]] = {}
+_LOGIN_LOCK = threading.Lock()
+
+
+def _login_blocked(key: str) -> int:
+    """返回还需等待的秒数；0 表示可以继续尝试。"""
+    now = time.time()
+    with _LOGIN_LOCK:
+        hits = [stamp for stamp in _LOGIN_HITS.get(key, []) if now - stamp < LOGIN_WINDOW]
+        if hits:
+            _LOGIN_HITS[key] = hits
+        else:
+            _LOGIN_HITS.pop(key, None)
+        if len(hits) < LOGIN_LIMIT:
+            return 0
+        return int(LOGIN_WINDOW - (now - hits[0])) + 1
+
+
+def _login_failed(key: str) -> None:
+    now = time.time()
+    with _LOGIN_LOCK:
+        if len(_LOGIN_HITS) > 4000:
+            stale = [k for k, v in _LOGIN_HITS.items() if not v or now - v[-1] > LOGIN_WINDOW]
+            for stale_key in stale:
+                _LOGIN_HITS.pop(stale_key, None)
+        _LOGIN_HITS.setdefault(key, []).append(now)
+
+
+def _login_ok(key: str) -> None:
+    with _LOGIN_LOCK:
+        _LOGIN_HITS.pop(key, None)
+
+# 邀请链接里的 token 就是一天的入家钥匙，日志里只留前 4 位。
+_INVITE_PATH = re.compile(r"^(/api/family/invite/)([^/]+)$")
+
+# 媒体路径统一在这里匹配，避免每个方法各写一遍 startswith/endswith/split。
+_MEDIA_ACTION = re.compile(r"^/api/media/([A-Za-z0-9_-]{1,64})/(confirm|restore)$")
+_MEDIA_BLOB = re.compile(r"^/api/media/blob/([A-Za-z0-9_-]{1,64})$")
+_MEDIA_ITEM = re.compile(r"^/api/media/([A-Za-z0-9_-]{1,64})$")
+_MEDIA_ID_HEADS = frozenset({"blob", "presign"})
+# 构建产物带内容哈希（index-AbC123.js）：只有这类文件可以长缓存
+_HASHED_ASSET = re.compile(r"-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$")
+
+# GET 路由：精确路径走表，带参数的走正则表；处理逻辑在 Handler 的同名方法里
+_GET_ROUTES = {
+    "/api/health": "_get_health",
+    "/api/auth/me": "_get_me",
+    "/api/state": "_get_state",
+    "/api/family": "_get_family",
+    "/api/media/trash": "_get_media_trash",
+    "/api/media": "_get_media",
+}
+_GET_PATTERNS = (
+    (_INVITE_PATH, "_get_invite"),
+    (_MEDIA_BLOB, "_media_blob"),
+)
+
+# POST 路由：精确路径查表；家庭相关共用 _family_post；AI 系列统一「先登录、再读 state」
+_POST_ROUTES = {
+    "/api/auth/register": "_register",
+    "/api/auth/login": "_login",
+    "/api/auth/logout": "_logout",
+    "/api/state/reset": "_reset_state",
+    "/api/media/presign": "_media_presign",
+    "/api/ai/caption": "_ai_caption",
+    "/api/ai/describe": "_ai_describe",
+    "/api/daily-quote": "_daily_quote_request",
+}
+_POST_FAMILY = frozenset(
+    {
+        "/api/family/invite",
+        "/api/family/join",
+        "/api/family/member/update",
+        "/api/family/member/remove",
+        "/api/me/avatar",
+    }
+)
+_POST_AI = {
+    "/api/ai/summary": "_ai_summary",
+    "/api/ai/analysis": "_ai_analysis",
+    "/api/ai/story": "_ai_story",
+}
+_POST_PATTERNS = ((_MEDIA_ACTION, "_media_action_post"),)
+
+
+def _mask_path(path: str) -> str:
+    match = _INVITE_PATH.match(path)
+    if not match:
+        return path
+    return f"{match.group(1)}{match.group(2)[:4]}…"
 
 # 传了 --static-dir（或 NESTORY_STATIC_DIR）时，同一个进程顺带把 dist/ 发出去，
 # 部署就只需要一个容器/一个端口；不传时行为和本地开发完全一致。
@@ -122,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
             "rid=%s unhandled error %s %s",
             getattr(self, "_rid", "-"),
             self.command,
-            urlsplit(self.path).path,
+            _mask_path(urlsplit(self.path).path),
         )
         try:
             self._send_json(
@@ -244,147 +339,23 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_get(self) -> None:
         parsed = urlsplit(self.path)
         path = parsed.path.rstrip("/") or "/"
-        query = parse_qs(parsed.query)
 
-        # 配了 --static-dir 时 "/" 交给前端 dist，" /api" 始终是自述接口
+        # 配了 --static-dir 时 "/" 交给前端 dist；没有静态目录时 "/" 只是接口自述
         if path == "/api" or (path == "/" and STATIC_DIR is None):
-            ai = llm.config()
-            self._ok(
-                {
-                    "service": "nestory-local-backend",
-                    "version": 2,
-                    "phase": "mysql",
-                    "endpoints": [
-                        "GET /api/health",
-                        "POST /api/auth/register",
-                        "POST /api/auth/login",
-                        "POST /api/auth/logout",
-                        "GET /api/auth/me",
-                        "GET /api/state",
-                        "PUT /api/state",
-                        "POST /api/state/reset",
-                        "GET /api/family",
-                        "POST /api/family/invite",
-                        "GET /api/family/invite/{token}",
-                        "POST /api/family/join",
-                        "POST /api/family/member/update",
-                        "POST /api/family/member/remove",
-                        "POST /api/me/avatar",
-                        "POST /api/ai/summary",
-                        "POST /api/ai/analysis",
-                        "POST /api/ai/story",
-                        "POST /api/ai/caption",
-                        "POST /api/ai/describe",
-                        "POST /api/daily-quote",
-                        "GET /api/media",
-                        "GET /api/media/trash",
-                        "POST /api/media/presign",
-                        "POST /api/media/{id}/confirm",
-                        "POST /api/media/{id}/restore",
-                        "PUT /api/media/blob/{id}",
-                        "GET /api/media/blob/{id}",
-                        "DELETE /api/media/{id}",
-                    ],
-                    "ai": {"provider": ai["provider"], "model": ai["model"]},
-                }
-            )
+            self._describe()
             return
 
-        if path == "/api/health":
-            ai = llm.config()
-            vision = llm.vision_config()
-            db_ok, db_detail = db.ping()
-            self._ok(
-                {
-                    "status": "ok" if db_ok else "degraded",
-                    "version": os.environ.get("NESTORY_VERSION", "dev"),
-                    "time": int(time.time() * 1000),
-                    "timezone": time.strftime("%Z"),
-                    "db": {"ok": db_ok, "detail": db_detail},
-                    "ai": {
-                        "provider": ai["provider"],
-                        "model": ai["model"],
-                        "configured": bool(ai["key"]) or ai["provider"] == "pollinations",
-                    },
-                    "vision": {
-                        "provider": vision["provider"],
-                        "model": vision["model"],
-                        "configured": vision["configured"],
-                    },
-                    "backup": scheduler.status(),
-                }
-            )
+        handler = _GET_ROUTES.get(path)
+        if handler is not None:
+            getattr(self, handler)()
             return
 
-        if path == "/api/auth/me":
-            try:
-                user, state = accounts.me(self._token())
-            except accounts.ApiError as exc:
-                self._fail(exc)
+        for pattern, name in _GET_PATTERNS:
+            match = pattern.match(path)
+            if match:
+                # 两个正则的最后一个捕获组都是 id/token（前面的组只为日志脱敏保留前缀）
+                getattr(self, name)(match.groups()[-1])
                 return
-            self._set_user(user)
-            self._ok({"user": user, "state": state})
-            return
-
-        if path == "/api/state":
-            got = self._authed()
-            if got is None:
-                return
-            user, state = got
-            self._ok({"source": "mysql", "state": state, "user": user})
-            return
-
-        if path == "/api/family":
-            user = self._media_user()
-            if user is None:
-                return
-            try:
-                with family.connect() as conn:
-                    payload = family.payload(conn, user)
-            except accounts.ApiError as exc:
-                self._fail(exc)
-                return
-            self._ok(payload)
-            return
-
-        if path.startswith("/api/family/invite/"):
-            token = path.rsplit("/", 1)[-1]
-            try:
-                with family.connect() as conn:
-                    preview = family.preview(conn, token)
-            except accounts.ApiError as exc:
-                self._fail(exc)
-                return
-            self._ok(preview)
-            return
-
-        if path == "/api/test-config":
-            self._ok({"source": "src/data/test_config.js", "data": fixtures.as_dict()})
-            return
-
-        if path == "/api/media/trash":
-            user = self._media_user()
-            if user is None:
-                return
-            try:
-                self._ok(media_store.trash(user))
-            except accounts.ApiError as exc:
-                self._fail(exc)
-            return
-
-        if path == "/api/media":
-            user = self._media_user()
-            if user is None:
-                return
-            try:
-                self._ok(media_store.listing(user))
-            except accounts.ApiError as exc:
-                self._fail(exc)
-            return
-
-        if path.startswith("/api/media/blob/"):
-            self._media_blob(path.rsplit("/", 1)[-1])
-            return
 
         # 未匹配的 /api/* 必须是 404，不能落进 SPA 的 index.html（否则调用方收到 HTML 200）
         if path == "/api" or path.startswith("/api/"):
@@ -395,6 +366,121 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._error(404, "not_found", path)
+
+    def _describe(self) -> None:
+        ai = llm.config()
+        self._ok(
+            {
+                "service": "nestory-local-backend",
+                "version": 2,
+                "phase": "mysql",
+                "endpoints": [
+                    "GET /api/health",
+                    "POST /api/auth/register",
+                    "POST /api/auth/login",
+                    "POST /api/auth/logout",
+                    "GET /api/auth/me",
+                    "GET /api/state",
+                    "PUT /api/state",
+                    "POST /api/state/reset",
+                    "GET /api/family",
+                    "POST /api/family/invite",
+                    "GET /api/family/invite/{token}",
+                    "POST /api/family/join",
+                    "POST /api/family/member/update",
+                    "POST /api/family/member/remove",
+                    "POST /api/me/avatar",
+                    "POST /api/ai/summary",
+                    "POST /api/ai/analysis",
+                    "POST /api/ai/story",
+                    "POST /api/ai/caption",
+                    "POST /api/ai/describe",
+                    "POST /api/daily-quote",
+                    "GET /api/media",
+                    "GET /api/media/trash",
+                    "POST /api/media/presign",
+                    "POST /api/media/{id}/confirm",
+                    "POST /api/media/{id}/restore",
+                    "PUT /api/media/blob/{id}",
+                    "GET /api/media/blob/{id}",
+                    "DELETE /api/media/{id}",
+                ],
+                "ai": {"provider": ai["provider"], "model": ai["model"]},
+            }
+        )
+
+    def _get_health(self) -> None:
+        # 公开探活端点：只回粗粒度状态，连接串、模型名、备份路径都留在日志里。
+        ai = llm.config()
+        vision = llm.vision_config()
+        db_ok, db_detail = db.ping()
+        if not db_ok:
+            logger.warning("health db ping failed: %s", db_detail)
+        self._ok(
+            {
+                "status": "ok" if db_ok else "degraded",
+                "version": os.environ.get("NESTORY_VERSION", "dev"),
+                "time": int(time.time() * 1000),
+                "db": {"ok": db_ok},
+                "ai": {"configured": bool(ai["key"]) or ai["provider"] == "pollinations"},
+                "vision": {"configured": vision["configured"]},
+            }
+        )
+
+    def _get_me(self) -> None:
+        try:
+            user, state = accounts.me(self._token())
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        self._set_user(user)
+        self._ok({"user": user, "state": state})
+
+    def _get_state(self) -> None:
+        got = self._authed()
+        if got is None:
+            return
+        user, state = got
+        self._ok({"source": "mysql", "state": state, "user": user})
+
+    def _get_family(self) -> None:
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            with family.connect() as conn:
+                payload = family.payload(conn, user)
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        self._ok(payload)
+
+    def _get_invite(self, token: str) -> None:
+        try:
+            with family.connect() as conn:
+                preview = family.preview(conn, token)
+        except accounts.ApiError as exc:
+            self._fail(exc)
+            return
+        self._ok(preview)
+
+    def _get_media_trash(self) -> None:
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            self._ok(media_store.trash(user))
+        except accounts.ApiError as exc:
+            self._fail(exc)
+
+    def _get_media(self) -> None:
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            self._ok(media_store.listing(user))
+        except accounts.ApiError as exc:
+            self._fail(exc)
 
     # ------------------------------------------------------------ 静态资源
 
@@ -437,12 +523,15 @@ class Handler(BaseHTTPRequestHandler):
             "no-cache"
             if target.name in ("index.html", "sw.js")
             else "public, max-age=31536000, immutable"
+            if _HASHED_ASSET.search(target.name)
+            else "public, max-age=86400"
         )
         try:
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", cache)
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(body)
             self._log(200, len(body))
@@ -521,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
             if status == 206:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
             self.send_header("Cache-Control", "private, max-age=86400")
+            # 媒体是同源直链：禁止浏览器按内容猜类型，避免把上传物当 HTML 执行
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             with path.open("rb") as fh:
                 fh.seek(start)
@@ -549,7 +640,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
-        limit = storage.max_bytes()
+        # 按 kind 的专属上限卡：照片 12MB，视频才走 storage.max_bytes()。
+        limit = media_store.kind_limit(row["kind"])
         if not 0 < length <= limit:
             self._error(
                 413,
@@ -600,13 +692,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_delete(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
-        if not path.startswith("/api/media/"):
+        item = _MEDIA_ITEM.match(path)
+        if not item or item.group(1) in _MEDIA_ID_HEADS:
             self._error(404, "not_found", path)
             return
-        media_id = path.rsplit("/", 1)[-1]
-        if media_id in ("", "blob", "presign"):
-            self._error(404, "not_found", path)
-            return
+        media_id = item.group(1)
         user = self._media_user()
         if user is None:
             return
@@ -631,113 +721,78 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_post(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
 
-        auth_routes = {
-            "/api/auth/register": self._register,
-            "/api/auth/login": self._login,
-            "/api/auth/logout": self._logout,
-            "/api/state/reset": self._reset_state,
-        }
-        ai_routes = {
-            "/api/ai/summary": self._ai_summary,
-            "/api/ai/analysis": self._ai_analysis,
-            "/api/ai/story": self._ai_story,
-            "/api/daily-quote": self._daily_quote,
-        }
-
-        if path == "/api/media/presign":
-            user = self._media_user()
-            if user is None:
-                return
-            try:
-                payload = self._read_json()
-            except ValueError as exc:
-                self._error(400, "bad_request", str(exc))
-                return
-            try:
-                self._ok(media_store.presign(user, payload))
-            except accounts.ApiError as exc:
-                self._fail(exc)
+        name = _POST_ROUTES.get(path)
+        if name is not None:
+            getattr(self, name)()
             return
 
-        if path.startswith("/api/media/") and path.endswith("/confirm"):
-            parts = path.split("/")
-            media_id = parts[3] if len(parts) > 4 else ""
-            user = self._media_user()
-            if user is None:
-                return
-            if not media_id:
-                self._error(404, "not_found", path)
-                return
-            try:
-                media_store.confirm(user, media_id, 0)
-            except accounts.ApiError as exc:
-                self._fail(exc)
-                return
-            self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}"})
-            return
-
-        if path.startswith("/api/media/") and path.endswith("/restore"):
-            parts = path.split("/")
-            media_id = parts[3] if len(parts) > 4 else ""
-            user = self._media_user()
-            if user is None:
-                return
-            if not media_id:
-                self._error(404, "not_found", path)
-                return
-            try:
-                self._ok(media_store.restore(user, media_id))
-            except accounts.ApiError as exc:
-                self._fail(exc)
-            return
-
-        if path in ("/api/family/invite", "/api/family/join", "/api/family/member/update",
-                    "/api/family/member/remove", "/api/me/avatar"):
+        if path in _POST_FAMILY:
             self._family_post(path)
             return
 
-        if path == "/api/ai/caption":
-            self._ai_caption()
-            return
-
-        if path == "/api/ai/describe":
-            self._ai_describe()
-            return
-
-        if path in auth_routes:
-            auth_routes[path]()
-            return
-
-        if path == "/api/daily-quote":
+        ai_name = _POST_AI.get(path)
+        if ai_name is not None:
+            # 这几条会调用付费模型：必须登录，匿名请求一律 401
             if self._authed() is None:
                 return
             try:
-                payload = self._read_json()
+                state = self._read_state()
             except ValueError as exc:
                 self._error(400, "bad_request", str(exc))
                 return
-            state = payload.get("state") if isinstance(payload.get("state"), dict) else payload
-            if not isinstance(state, dict):
-                self._error(400, "bad_request", "invalid state")
+            getattr(self, ai_name)(state)
+            return
+
+        for pattern, method_name in _POST_PATTERNS:
+            match = pattern.match(path)
+            if match:
+                getattr(self, method_name)(match)
                 return
-            self._daily_quote(state)
-            return
 
-        handler = ai_routes.get(path)
-        if handler is None:
-            self._error(404, "not_found", path)
-            return
+        self._error(404, "not_found", path)
 
-        # 这几条会调用付费模型：必须登录，匿名请求一律 401
-        if self._authed() is None:
+    def _media_presign(self) -> None:
+        user = self._media_user()
+        if user is None:
             return
-
         try:
-            state = self._read_state()
+            payload = self._read_json()
         except ValueError as exc:
             self._error(400, "bad_request", str(exc))
             return
-        handler(state)
+        try:
+            self._ok(media_store.presign(user, payload))
+        except accounts.ApiError as exc:
+            self._fail(exc)
+
+    def _media_action_post(self, match: "re.Match[str]") -> None:
+        media_id, action = match.groups()
+        user = self._media_user()
+        if user is None:
+            return
+        try:
+            if action == "confirm":
+                # 大小以存储里的真实字节为准，客户端上报值只出现在日志里。
+                media_store.confirm(user, media_id, 0)
+                self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}"})
+            else:
+                self._ok(media_store.restore(user, media_id))
+        except accounts.ApiError as exc:
+            self._fail(exc)
+
+    def _daily_quote_request(self) -> None:
+        if self._authed() is None:
+            return
+        try:
+            payload = self._read_json()
+        except ValueError as exc:
+            self._error(400, "bad_request", str(exc))
+            return
+        state = payload.get("state") if isinstance(payload.get("state"), dict) else payload
+        if not isinstance(state, dict):
+            self._error(400, "bad_request", "invalid state")
+            return
+        self._daily_quote(state)
 
     def do_PUT(self) -> None:  # noqa: N802
         self._consumed = 0
@@ -752,8 +807,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_put(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
-        if path.startswith("/api/media/blob/"):
-            self._media_upload(path.rsplit("/", 1)[-1])
+        blob = _MEDIA_BLOB.match(path)
+        if blob:
+            self._media_upload(blob.group(1))
             return
         if path != "/api/state":
             self._error(404, "not_found", path)
@@ -792,13 +848,22 @@ class Handler(BaseHTTPRequestHandler):
     def _login(self) -> None:
         try:
             data = self._read_json()
-            user, state, token = accounts.login(data)
         except ValueError as exc:
             self._error(400, "bad_request", str(exc))
             return
+        email = str(data.get("email") or "").strip().lower()
+        key = f"{email}|{self.client_address[0]}"
+        wait = _login_blocked(key)
+        if wait:
+            self._error(429, "too_many_attempts", f"尝试次数过多，请 {wait} 秒后再试")
+            return
+        try:
+            user, state, token = accounts.login(data)
         except accounts.ApiError as exc:
+            _login_failed(key)
             self._fail(exc)
             return
+        _login_ok(key)
         self._set_user(user)
         self._ok(
             {"source": "mysql", "user": user, "state": state},
@@ -1067,7 +1132,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         ms = (time.perf_counter() - started) * 1000
         level = logging.INFO if status < 400 else logging.WARNING if status < 500 else logging.ERROR
-        path = urlsplit(self.path).path
+        path = _mask_path(urlsplit(self.path).path)
         logger.log(
             level,
             "rid=%s %s %s -> %d %.1fms %dB user=%s%s",

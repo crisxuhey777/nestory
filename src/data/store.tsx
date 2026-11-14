@@ -6,10 +6,26 @@ import { ApiError, api, isAppState } from './api'
 import AuthScreen from '../components/AuthScreen'
 import BootScreen from '../components/Boot'
 import { normalizeBirthState } from '../lib/birth'
+import { pruneTrash } from '../lib/trash'
 import { haptic } from '../lib/notify'
 import { useReminderAlert } from '../lib/useReminderAlert'
 
 export { isAppState }
+
+/** 防抖窗口：连续记录时只发最后一次。 */
+const SAVE_DELAY = 800
+/** Fetch 对 keepalive 请求体有 64KiB 上限，超了会直接抛 TypeError（而且会被 catch 吞掉）。 */
+const KEEPALIVE_LIMIT = 60_000
+/** 上次离开页面时没保存成功的标记，下次启动提醒一句。 */
+const UNSAVED_KEY = 'nestory.unsaved'
+
+function bodyBytes(state: AppState): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify({ state })).length
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
 
 type Action =
   | { type: 'addFeed'; feed: FeedRecord }
@@ -164,7 +180,7 @@ function rawReducer(state: AppState, action: Action): AppState {
 
 /** 所有写入都过一遍生日下界：非法记录会进入 archived，不会出现在主数组里。 */
 function reducer(state: AppState, action: Action): AppState {
-  return normalizeBirthState(rawReducer(state, action))
+  return pruneTrash(normalizeBirthState(rawReducer(state, action)))
 }
 
 export function uid(prefix = 'r'): string {
@@ -183,6 +199,10 @@ type Store = {
   signOut: () => void
   /** 从后端重新拉一次状态（加入家庭、换头像后需要） */
   reload: () => Promise<void>
+  /** 当前账号在这个家里的权限；只读成员只能看。 */
+  permission: FamilyMember['permission'] | undefined
+  /** permission 不是 read；只读成员的写入会被后端 403，这里先拦住。 */
+  canWrite: boolean
 }
 
 const StoreContext = createContext<Store | null>(null)
@@ -278,7 +298,7 @@ function ReadyStore({
   signOut: () => void
   children: ReactNode
 }) {
-  const [state, apply] = useReducer(reducer, session.state, normalizeBirthState)
+  const [state, apply] = useReducer(reducer, session.state, (raw) => pruneTrash(normalizeBirthState(raw)))
   const [toasts, setToasts] = useState<Toast[]>([])
   const firstRender = useRef(true)
   const lastSaveError = useRef(0)
@@ -292,25 +312,110 @@ function ReadyStore({
   // 到点提醒：有系统通知权限就走通知，否则退回应用内提示
   useReminderAlert(state, toast)
 
+  const permission = useMemo(
+    () => state.family.find((m) => m.id === state.viewerId)?.permission,
+    [state.family, state.viewerId],
+  )
+  const canWrite = permission !== 'read'
+  const viewerId = state.viewerId
+
   const saveChain = useRef<Promise<unknown>>(Promise.resolve())
   const latestState = useRef(state)
   const dirty = useRef(false)
   /** reload() 带回来的状态不需要再回写一遍（只读成员回写还会 403） */
   const skipNextSave = useRef(false)
 
+  const recordSaveError = useCallback((message: string) => {
+    try {
+      localStorage.setItem(UNSAVED_KEY, message)
+    } catch {
+      /* 隐私模式下写不进去就算了 */
+    }
+  }, [])
+
+  const clearSaveError = useCallback(() => {
+    try {
+      localStorage.removeItem(UNSAVED_KEY)
+    } catch {
+      /* 同上 */
+    }
+  }, [])
+
+  // 上次离开时如果有改动没发出去，这次进来提醒一下（比静默吞掉好）。
+  useEffect(() => {
+    let pending = ''
+    try {
+      pending = localStorage.getItem(UNSAVED_KEY) ?? ''
+    } catch {
+      return
+    }
+    if (!pending) return
+    clearSaveError()
+    toast('上次离开时的改动可能没保存，请确认最新记录')
+  }, [clearSaveError, toast])
+
   useEffect(() => {
     latestState.current = state
   }, [state])
 
-  // 关闭/刷新页面前尽量把最后一次改动补发出去（小状态可用 keepalive）
+  /** 把最新快照排进串行链；返回的 Promise 不会 reject。 */
+  const queueSave = useCallback(
+    (snapshot: AppState, keepalive = false) => {
+      saveChain.current = saveChain.current
+        .catch(() => undefined)
+        .then(() => api.saveState(snapshot, keepalive))
+        .then(() => {
+          clearSaveError()
+          if (latestState.current === snapshot) dirty.current = false
+        })
+        .catch((error: unknown) => {
+          recordSaveError(error instanceof Error ? error.message : '保存失败')
+          if (error instanceof ApiError && error.status === 401) {
+            signOut()
+            return
+          }
+          const now = Date.now()
+          if (now - lastSaveError.current < 8000) return
+          lastSaveError.current = now
+          toast(error instanceof Error ? `保存失败：${error.message}` : '保存失败')
+        })
+      return saveChain.current
+    },
+    [clearSaveError, recordSaveError, signOut, toast],
+  )
+
+  /** 立即把未保存的改动补发出去（卸载 / 切后台 / 退出登录前）。 */
+  const flushPending = useCallback(
+    (keepalive: boolean) => {
+      if (!dirty.current) return Promise.resolve()
+      const snapshot = latestState.current
+      return queueSave(snapshot, keepalive && bodyBytes(snapshot) <= KEEPALIVE_LIMIT)
+    },
+    [queueSave],
+  )
+
+  // 关闭/刷新页面、切到后台时尽量把最后一次改动补发出去。
   useEffect(() => {
     const flush = () => {
-      if (!dirty.current) return
-      void api.saveState(latestState.current, true).catch(() => undefined)
+      void flushPending(true)
+    }
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flush()
     }
     window.addEventListener('pagehide', flush)
-    return () => window.removeEventListener('pagehide', flush)
-  }, [])
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [flushPending])
+
+  // 卸载（退出登录 / 切换账号）时不能把 800ms 内的改动丢掉。
+  useEffect(() => {
+    return () => {
+      void flushPending(true)
+    }
+  }, [flushPending])
 
   // 每次改动后自动保存（800ms 防抖），并用串行链避免旧请求覆盖新状态
   useEffect(() => {
@@ -327,28 +432,23 @@ function ReadyStore({
     latestState.current = snapshot
     dirty.current = true
     const timer = setTimeout(() => {
-      saveChain.current = saveChain.current
-        .catch(() => undefined)
-        .then(() => api.saveState(snapshot))
-        .then(() => {
-          if (latestState.current === snapshot) dirty.current = false
-        })
-        .catch((error) => {
-          if (error instanceof ApiError && error.status === 401) {
-            signOut()
-            return
-          }
-          const now = Date.now()
-          if (now - lastSaveError.current < 8000) return
-          lastSaveError.current = now
-          toast(error instanceof Error ? `保存失败：${error.message}` : '保存失败')
-        })
-    }, 800)
+      void queueSave(snapshot)
+    }, SAVE_DELAY)
     return () => clearTimeout(timer)
-  }, [state, toast, signOut])
+  }, [state, queueSave])
 
   const dispatch = useCallback<Dispatch<Action>>(
     (action) => {
+      // 只读成员：后端会 403，本地先拦住，避免「看起来记上了、8 秒后报错」。
+      // 例外：换自己的头像（后端 family.set_avatar 对 read 成员是允许的）。
+      const ownAvatar =
+        action.type === 'updateFamilyMember' &&
+        action.id === viewerId &&
+        Object.keys(action.patch ?? {}).every((key) => key === 'avatarUrl')
+      if (permission === 'read' && !ownAvatar && action.type !== 'hydrate' && action.type !== 'sync') {
+        toast('只读成员只能查看，不能修改记录')
+        return
+      }
       if (action.type === 'reset') {
         void api
           .resetState()
@@ -360,7 +460,7 @@ function ReadyStore({
       if (HAPTIC_ACTIONS.has(action.type) && latestState.current.reminder.vibration) haptic(8)
       apply(action)
     },
-    [toast],
+    [permission, toast, viewerId],
   )
 
   const dismiss = useCallback((id: number) => {
@@ -381,9 +481,25 @@ function ReadyStore({
     }
   }, [signOut, toast])
 
+  /** 退出登录前先把未保存的改动发出去，否则最后一次修改会随组件卸载消失。 */
+  const leave = useCallback(() => {
+    void flushPending(false).then(() => signOut())
+  }, [flushPending, signOut])
+
   const value = useMemo(
-    () => ({ state, dispatch, user: session.user, toast, toasts, dismiss, signOut, reload }),
-    [state, dispatch, session.user, toast, toasts, dismiss, signOut, reload],
+    () => ({
+      state,
+      dispatch,
+      user: session.user,
+      toast,
+      toasts,
+      dismiss,
+      signOut: leave,
+      reload,
+      permission,
+      canWrite,
+    }),
+    [state, dispatch, session.user, toast, toasts, dismiss, leave, reload, permission, canWrite],
   )
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

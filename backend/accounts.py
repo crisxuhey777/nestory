@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from calendar import monthrange
@@ -29,6 +30,10 @@ import family
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD = 8
 MAX_PASSWORD = 200  # 上限既防超长输入，也防 PBKDF2 被当 CPU 放大器
+DEMO_DEFAULT_EMAIL = "demo@nestory.local"
+# 演示账号默认是本地开发用的 demo@nestory.local；生产部署把它设成自己的账号，
+# 或者显式设成空字符串来关闭「恢复示例数据」特权（e2e 依赖这个默认值）。
+DEMO_EMAIL = os.environ.get("NESTORY_DEMO_EMAIL", DEMO_DEFAULT_EMAIL).strip().lower()
 log = logging.getLogger("nestory.auth")
 
 _dummy_hash: str | None = None
@@ -227,6 +232,9 @@ def _empty_state(baby_name: str = "", birthday: str = "") -> dict:
     return build_empty_state(baby_name, birthday)
 
 
+def _is_demo_row(row: dict) -> bool:
+    return bool(DEMO_EMAIL) and _s(row.get("email")).lower() == DEMO_EMAIL
+
 
 def _public_user(row: dict) -> dict:
     birthday = row.get("baby_birthday")
@@ -238,7 +246,7 @@ def _public_user(row: dict) -> dict:
         "babyName": row["baby_name"],
         "babyBirthday": birthday.isoformat() if birthday else None,
         "avatarUrl": f"/api/media/blob/{avatar}" if avatar else None,
-        "isDemo": row["email"] == "demo@nestory.local",
+        "isDemo": _is_demo_row(row),
         "createdAt": row["created_at"].isoformat(timespec="seconds")
         if row.get("created_at")
         else None,
@@ -532,8 +540,15 @@ def reset_state(token: str | None) -> dict:
         row = _user_row_by_token(conn, token)
         if not row:
             raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
+        # 共享的 household_state 一份被清空，全家都受影响 —— 只允许管理员。
+        household, permission = family.permission_of(conn, row["id"])
+        if family.RANK.get(permission, 0) < family.RANK["admin"]:
+            raise ApiError(403, "admin_only", "只有家庭管理员可以重置全家的记录")
+        current = family.load_state(conn, household["id"])
+        if current:
+            family.backup_state(conn, household["id"], row["id"], "reset", current)
         birthday = row.get("baby_birthday")
-        if row.get("email") == "demo@nestory.local":
+        if _is_demo_row(row):
             # Demo fixtures are keyed to the fixed birthday; restoring the
             # user-changed birthday would archive every fixture record.
             from app_state import build_state

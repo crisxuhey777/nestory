@@ -9,6 +9,7 @@ import {
   diaperCountsSince,
   latestGrowth,
   previousGrowth,
+  signed,
   sleepStatsSince,
 } from '../lib/stats'
 
@@ -123,7 +124,7 @@ export default function GrowthPage() {
                 <span className="measure__num">{latest?.weightKg?.toFixed(1) ?? '—'}</span>
                 <span className="measure__unit">kg</span>
                 {weightDelta != null ? (
-                  <span className="measure__delta">+{weightDelta.toFixed(1)} kg</span>
+                  <span className="measure__delta">{signed(weightDelta)} kg</span>
                 ) : (
                   <span className="measure__delta measure__delta--quiet">首次记录</span>
                 )}
@@ -210,7 +211,7 @@ export default function GrowthPage() {
                         {g.headCm?.toFixed(1) ?? '—'}
                         <small>cm</small>
                       </span>
-                      <span className="growth-row__delta">{dw != null && dw > 0 ? `+${dw.toFixed(1)}` : ''}</span>
+                      <span className="growth-row__delta">{dw != null ? signed(dw) : ''}</span>
                     </div>
                   )
                 })}

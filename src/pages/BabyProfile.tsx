@@ -2,11 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { Icon } from '../brand/icons'
 import { ScreenHead } from '../components/Common'
+import { BabyFields } from '../components/BabyFields'
+import { BabyAvatarPicker } from '../components/BabyAvatarPicker'
+import type { AvatarChoice } from '../components/BabyAvatarPicker'
 import { Sheet } from '../components/Sheet'
 import { useStore } from '../data/store'
 import { preBirthConflicts } from '../lib/birth'
 import type { BirthConflicts } from '../lib/birth'
-import { shortDate, toISODate } from '../lib/date'
+import { shortDate } from '../lib/date'
+import { uploadBabyAvatar } from '../lib/media'
 import { goBack } from '../lib/route'
 import type { Baby } from '../data/types'
 
@@ -25,12 +29,6 @@ type BabyForm = {
 
 const DEFAULT_AVATAR = '/brand/app-icon-180.png'
 
-type AvatarChoice = {
-  key: string
-  src: string
-  deletable: boolean
-}
-
 function toForm(baby: Baby): BabyForm {
   return {
     name: baby.name,
@@ -46,35 +44,11 @@ function toForm(baby: Baby): BabyForm {
   }
 }
 
-async function fileToAvatar(file: File): Promise<string> {
-  const url = URL.createObjectURL(file)
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image()
-      el.onload = () => resolve(el)
-      el.onerror = () => reject(new Error('image decode failed'))
-      el.src = url
-    })
-    const size = 512
-    const canvas = document.createElement('canvas')
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('canvas unavailable')
-    const scale = Math.max(size / img.width, size / img.height)
-    const w = img.width * scale
-    const h = img.height * scale
-    ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
-    return canvas.toDataURL('image/jpeg', 0.84)
-  } finally {
-    URL.revokeObjectURL(url)
-  }
-}
-
 export default function BabyProfilePage() {
   const { state, dispatch, toast } = useStore()
-  const initialRef = useRef<BabyForm>(toForm(state.baby))
-  const [form, setForm] = useState<BabyForm>(initialRef.current)
+  const [baseline, setBaseline] = useState<BabyForm>(() => toForm(state.baby))
+  const [form, setForm] = useState<BabyForm>(baseline)
+  const [uploading, setUploading] = useState(false)
   const [conflict, setConflict] = useState<{ baby: Baby; counts: BirthConflicts } | null>(null)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [holdingAvatar, setHoldingAvatar] = useState<string | null>(null)
@@ -90,7 +64,17 @@ export default function BabyProfilePage() {
   const guardPushed = useRef(false)
   const now = Date.now()
 
-  const dirty = JSON.stringify(form) !== JSON.stringify(initialRef.current)
+  const dirty = JSON.stringify(form) !== JSON.stringify(baseline)
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+
+  // 家人改了宝宝资料、而本地没有未保存修改时，基线跟着更新，避免「保存」把别人改的覆盖回去。
+  useEffect(() => {
+    if (dirtyRef.current) return
+    const next = toForm(state.baby)
+    setBaseline(next)
+    setForm(next)
+  }, [state.baby])
 
   useEffect(() => {
     return () => {
@@ -142,15 +126,24 @@ export default function BabyProfilePage() {
   const exitPage = () => {
     allowLeave.current = true
     setLeaveOpen(false)
-    if (blockedBack.current) {
-      blockedBack.current = false
-      history.go(-2)
-      window.setTimeout(() => {
-        if (window.location.hash === '#/baby') goBack('profile')
-      }, 220)
+    if (!blockedBack.current) {
+      goBack('profile')
       return
     }
-    goBack('profile')
+    blockedBack.current = false
+    // go(-2) 要跳过「脏数据哨兵」和用户按的那一次返回；
+    // 不再用固定 220ms 猜导航速度，改成等 popstate 落地后再判断。
+    let settled = false
+    const settle = () => {
+      if (settled) return
+      settled = true
+      window.removeEventListener('popstate', onPop)
+      if (window.location.hash === '#/baby') goBack('profile')
+    }
+    const onPop = () => window.setTimeout(settle, 0)
+    window.addEventListener('popstate', onPop)
+    history.go(-2)
+    window.setTimeout(settle, 400)
   }
 
   const requestClose = () => {
@@ -217,16 +210,20 @@ export default function BabyProfilePage() {
   const onAvatarFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
-    if (!file) return
+    if (!file || uploading) return
     if (!file.type.startsWith('image/')) {
       toast('请选择一张照片')
       return
     }
+    setUploading(true)
     try {
-      const avatar = await fileToAvatar(file)
+      // 头像也进媒体库：state 里只存 /api/media/blob/<id>，不再塞 base64。
+      const avatar = await uploadBabyAvatar(file)
       setForm((prev) => ({ ...prev, avatar }))
-    } catch {
-      toast('这张照片读不出来，换一张试试')
+    } catch (error) {
+      toast(error instanceof Error ? `头像没能上传：${error.message}` : '头像没能上传，稍后再试')
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -273,6 +270,15 @@ export default function BabyProfilePage() {
     }
     holdStart.current = null
     setHoldingAvatar(null)
+  }
+
+  const selectAvatar = (choice: AvatarChoice) => {
+    if (longPressFired.current) {
+      longPressFired.current = false
+      return
+    }
+    setRemoveKey(null)
+    setForm({ ...form, avatar: choice.src })
   }
 
   const removeAvatar = (choice: AvatarChoice) => {
@@ -345,179 +351,29 @@ export default function BabyProfilePage() {
 
         <section className="panel baby-edit__card">
           <div className="baby-form">
-            <label className="field">
-              <span className="field__label">昵称</span>
-              <input
-                className="input"
-                value={form.name}
-                maxLength={12}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="宝宝的小名"
-              />
-            </label>
-            <div className="field-row">
-              <label className="field">
-                <span className="field__label">出生日期</span>
-                <input
-                  className="input"
-                  type="date"
-                  value={form.birthday}
-                  max={toISODate(now)}
-                  onChange={(e) => setForm({ ...form, birthday: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span className="field__label">出生时间</span>
-                <input
-                  className="input"
-                  type="time"
-                  value={form.birthTime}
-                  onChange={(e) => setForm({ ...form, birthTime: e.target.value })}
-                />
-              </label>
-            </div>
-            <div className="field">
-              <span className="field__label">性别</span>
-              <div className="segmented">
-                {([
-                  ['girl', '女孩'],
-                  ['boy', '男孩'],
-                ] as const).map(([v, l]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    className={`segmented__item${form.gender === v ? ' segmented__item--on' : ''}`}
-                    onClick={() => setForm({ ...form, gender: v })}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="field-row field-row--three">
-              <label className="field">
-                <span className="field__label">出生体重 · kg</span>
-                <input
-                  className="input"
-                  inputMode="decimal"
-                  value={form.birthWeightKg}
-                  onChange={(e) => setForm({ ...form, birthWeightKg: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span className="field__label">出生身长 · cm</span>
-                <input
-                  className="input"
-                  inputMode="decimal"
-                  value={form.birthHeightCm}
-                  onChange={(e) => setForm({ ...form, birthHeightCm: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span className="field__label">头围 · cm</span>
-                <input
-                  className="input"
-                  inputMode="decimal"
-                  value={form.birthHeadCm}
-                  onChange={(e) => setForm({ ...form, birthHeadCm: e.target.value })}
-                />
-              </label>
-            </div>
-            <label className="field">
-              <span className="field__label">出生地</span>
-              <input
-                className="input"
-                value={form.birthplace}
-                maxLength={20}
-                onChange={(e) => setForm({ ...form, birthplace: e.target.value })}
-                placeholder="例如 杭州"
-              />
-            </label>
+            <BabyFields
+              form={form}
+              now={now}
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+            />
             <div className="field">
               <span className="field__label">头像</span>
-              <div className="avatar-picker">
-                {avatarChoices.map((choice) => (
-                  <div className="avatar-picker__slot" key={choice.key}>
-                    <button
-                      type="button"
-                      data-avatar-key={choice.key}
-                      className={`avatar-picker__item${form.avatar === choice.src ? ' avatar-picker__item--on' : ''}${holdingAvatar === choice.key ? ' avatar-picker__item--holding' : ''}`}
-                      onClick={() => {
-                        if (longPressFired.current) {
-                          longPressFired.current = false
-                          return
-                        }
-                        setRemoveKey(null)
-                        setForm({ ...form, avatar: choice.src })
-                      }}
-                      onPointerDown={(event) => startAvatarHold(event, choice)}
-                      onPointerMove={moveAvatarHold}
-                      onPointerUp={endAvatarHold}
-                      onPointerCancel={endAvatarHold}
-                      onPointerLeave={endAvatarHold}
-                      onContextMenu={(event) => event.preventDefault()}
-                      aria-label={
-                        choice.deletable
-                          ? '选择头像，长按显示移除按钮'
-                          : '默认头像，不能删除'
-                      }
-                      title={
-                        choice.deletable
-                          ? '轻点选择 · 长按显示移除'
-                          : '默认头像，不能删除'
-                      }
-                    >
-                      <img src={choice.src} alt="" draggable={false} />
-                      {choice.deletable ? null : (
-                        <span className="avatar-picker__lock" aria-hidden="true">
-                          <Icon name="shield" size={9} />
-                        </span>
-                      )}
-                    </button>
-                    {removeKey === choice.key ? (
-                      <button
-                        type="button"
-                        className="avatar-picker__remove"
-                        aria-label="移除这张头像"
-                        title="移除这张头像"
-                        onClick={() => removeAvatar(choice)}
-                      >
-                        <Icon name="close" size={10} />
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-              <div className="avatar-actions">
-                <button type="button" className="btn btn--quiet btn--sm" onClick={() => uploadRef.current?.click()}>
-                  <Icon name="album" size={14} />
-                  从相册上传
-                </button>
-                <button type="button" className="btn btn--quiet btn--sm" onClick={() => cameraRef.current?.click()}>
-                  <Icon name="camera" size={14} />
-                  拍一张
-                </button>
-              </div>
-              <input
-                ref={uploadRef}
-                className="sr-only"
-                type="file"
-                accept="image/*"
-                aria-label="选择头像图片"
-                onChange={onAvatarFile}
+              <BabyAvatarPicker
+                choices={avatarChoices}
+                selected={form.avatar}
+                holdingKey={holdingAvatar}
+                removeKey={removeKey}
+                onSelect={selectAvatar}
+                onHoldStart={startAvatarHold}
+                onHoldMove={moveAvatarHold}
+                onHoldEnd={endAvatarHold}
+                onRemove={removeAvatar}
+                onPickUpload={() => uploadRef.current?.click()}
+                onPickCamera={() => cameraRef.current?.click()}
+                uploadRef={uploadRef}
+                cameraRef={cameraRef}
+                onFile={onAvatarFile}
               />
-              <input
-                ref={cameraRef}
-                className="sr-only"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                aria-label="拍摄头像"
-                onChange={onAvatarFile}
-              />
-              <p className="timer__hint" style={{ textAlign: 'left', marginTop: 8 }}>
-                支持 JPG / PNG，头像会自动裁成方形。长按任意头像显示移除按钮，默认头像会一直保留。
-              </p>
             </div>
           </div>
 

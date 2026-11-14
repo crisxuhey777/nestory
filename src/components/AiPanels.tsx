@@ -5,6 +5,8 @@ import type { AppState } from '../data/types'
 import { API } from '../data/config'
 import { shrinkToDataURL } from '../lib/media'
 
+import { aiPost } from '../data/api'
+
 export type GrowthAnalysis = {
   headline: string
   points: { label: string; text: string }[]
@@ -13,21 +15,8 @@ export type GrowthAnalysis = {
 
 export type AlbumStory = { title: string; body: string }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const payload = (await res.json().catch(() => null)) as (T & { message?: string }) | null
-  if (!res.ok || !payload) {
-    throw new Error(payload?.message || '暂时无法生成，请稍后再试')
-  }
-  return payload
-}
-
 async function postAi<T>(path: string, state: AppState): Promise<T> {
-  return postJson<T>(path, { state })
+  return aiPost<T>(path, { state })
 }
 
 const ANALYSIS_LINES = ['数这七天的喂养和睡眠…', '看体重曲线上的小拐点…', '把变化写成一句人话…']
@@ -159,7 +148,7 @@ export function AlbumAiCard() {
           for (let attempt = 0; attempt < 3; attempt += 1) {
             try {
               const image = await shrinkToDataURL(photo.thumb || photo.src, 768)
-              const result = await postJson<{ description: string }>(API.aiDescribe, { image })
+              const result = await aiPost<{ description: string }>(API.aiDescribe, { image }, 60_000)
               const description = String(result.description || '').trim()
               if (!description) throw new Error('empty description')
               described[photo.id] = description

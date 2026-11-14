@@ -96,7 +96,6 @@ AI 目前有六处入口。前五处把当前整份 `AppState` POST 给后端：
 | --- | --- | --- |
 | `#/home` | 首页 | 品牌主视觉（从成长相册选 4 张、可左右滑动、6 秒自动轮播）→ 悬浮快捷区 → 今日摘要 → AI 小结 → 纪念日倒计时（当天可记一张照片和一句话）；照片与里程碑只在相册/成长页，首页不再重复第三处入口 |
 | `#/feed` | 喂养中心 | 统计、近 7 天趋势、提醒、二级喂养记录与编辑删除；不显示录入表单 |
-| `#/record` | 快速记录 | 从首页摘要卡进入，只保留方式选择与最近 5 条；保存后回到首页 |
 | `#/growth` | 成长记录 | 左对齐标题；最新测量深绿卡、体重趋势、五列队列表格；睡眠、尿布分段 |
 | `#/album` | 电子相册 | 最近瞬间封面、预览最多 4 格（>4 时末格为 more + 剩余数量）、月份筛选、完整二级页、全屏查看与手势缩放、添加面板（照片 2 种 / 视频 2 种，会动短片自动归入照片）、成长时间轴；管理员可从筛选行「选择」进入多选删除，删除的照片进「最近删除」 |
 | `#/trash` | 最近删除 | 仅家庭管理员可见，从「我的」设置进入；列出 7 天内删掉的照片，可一张张恢复；超过 7 天由服务端定时任务彻底删除，无法找回 |
@@ -107,7 +106,7 @@ AI 目前有六处入口。前五处把当前整份 `AppState` POST 给后端：
 | `#/reminders` | 提醒中心 | 开关、夜间安静、间隔选择、下次提醒预览、系统通知权限与测试通知 |
 | `#/about` | 关于 Nestory | 名字由来、品牌信念、小屋里的一天、写给未来的信 |
 
-底部四个 Tab 与页面共用同一套设计 Token；喂养中心与快速记录返回首页，设置、关于返回我的家庭，提醒中心按来源返回首页或设置。
+底部四个 Tab 与页面共用同一套设计 Token；喂养中心与提醒中心按来源返回，设置、关于返回我的家庭，提醒中心按来源返回首页或设置。
 
 ---
 
@@ -132,7 +131,7 @@ src/
   App.tsx               StoreProvider + 路由外壳 + TabBar + Toasts
   brand/
     Logo.tsx            巢形标记 / 字标 / 横向锁定（与 public/brand 同一套几何）
-    icons.tsx           38 枚实心双色图标 + <Icon />
+    icons.tsx           41 枚实心双色图标 + <Icon />
   components/
     Common.tsx          ScreenHead / SectionHead / TabBar / Toasts / Sparkline
     Sheet.tsx           底部抽屉（portal、ESC、锁滚动）
@@ -147,14 +146,17 @@ src/
     birth.ts            生日下界、归档归一化、改生日冲突统计
     stats.ts            喂奶间隔、今日统计、近 7 天、睡眠/尿布汇总
     prefs.ts            阅读偏好（字体大小、减少动效）与 CSS 变量
-    route.ts            hash 路由（含二级页与 `?t=` 邀请参数）
+    route.ts            hash 路由（含二级页、页内浮层 `pushOverlay/exitOverlay` 与 `?t=` 邀请参数）
     reminder.ts         提醒到期判定（间隔、夜间安静、去重键、文案）
     notify.ts           系统通知（Service Worker 优先，退回 Notification）+ 轻震
     pwa.ts              Service Worker 注册与「已安装」判断
-    useReminderAlert.ts 前台 20s 轮询到期提醒并发送通知
-    media.ts            图片压缩上传；头像走 media 存 id，不进状态 JSON
+    useReminderAlert.ts 前台 20s 轮询到期提醒并发送通知（定时器只挂一次，投递成功后才去重）
+    media.ts            图片压缩上传；头像走 media 存 id，不进状态 JSON；无浏览器本地视频缓存
+    sheets.ts           抽屉登记表（返回键先关抽屉，不再靠样式类反查 DOM）
+    trash.ts            回收站本地裁剪（7 天 / 最多 200 条，跟着每次写入跑）
     viewer.ts           当前操作者显示名（viewerId → 家庭管理员 → 我）
-  pages/                Home / Feed / Growth / Album / Trash / Profile / Invite / Join / Settings / Reminders / About
+  pages/                Home / Feed / Growth / Album / Trash / Profile / BabyProfile / Invite / Join / Settings / Reminders / About
+  components/           Common / Sheet / QuickSheets / FeedSheet / AiPanels / AlbumCards / AlbumLightbox / AlbumAddSheet / AlbumSelectBar / HomeHero / HomeAnniversary / HomeOverview / FeedStatsPanel / FeedBreastTimer / FeedRecords / BabyFields / BabyAvatarPicker / useLightboxZoom / Onboarding / AuthScreen / Boot / ExitGuard / AiThinking
   styles/
     tokens.css          颜色、字体、圆角、阴影
     base.css            重置、桌面居中画布、排版原子类
@@ -207,7 +209,8 @@ src/
 | --- | --- |
 | `tsc --noEmit` | 通过，无类型错误 |
 | `npm run build` | 通过（约 2.2s，JS 440.4 kB / gzip 134.6 kB，CSS 281.0 kB / gzip 81.2 kB） |
-| `npm test` | 32 个用例全部通过（6 个文件）：月龄、喂养提醒到点/夜间抑制/去重、跨午夜间隔、统计、编辑/删除重算、睡眠裁剪、纪念日倒计时与当天边界、API 错误映射、照片色调 |
+| `npm test` | **50 个用例全部通过（10 个文件）**：月龄、喂养提醒到点/夜间抑制/去重、跨午夜间隔、统计、编辑/删除重算、睡眠裁剪与跨午夜段数、纪念日倒计时与当天边界、差值正负号、相对时间文案、媒体地址取 id（多副本/去重）、抽屉登记表（后开先关）、批量删除的媒体 id 收集与 409/404 分支、回收站裁剪（7 天边界/上限 200/无变化不换对象）、API 错误映射、照片色调 |
+| `npm run test:python` | 后端 12 个用例：加入家庭时的状态合并（继承空家庭、按 id 并集、保留已有宝宝资料、归档与封面合并、时间序稳定）；备份表范围与恢复顺序（老备份不越界清表、家庭表在前） |
 | 首页轮播（`node _e2e_home.mjs`） | 28/28 通过：自动轮播、指示点同步、点击切换、真实手指左滑、竖滑不锁页面、无横向溢出、四宫格/加号格/仅相册选图/更换/清空/恢复默认（登录后数据来自 MySQL） |
 | 纪念日卡片（`node _e2e_anniversary.mjs`） | 10/10 通过：平日是只读倒计时并显示日期、当天变为「今天」且可点、录入面板、一句话写进成长时间轴（kind=anniversary，带上写下时的生日）、改回出生日期后记录从时间轴收起、生日改回去后记录重新出现、测试后还原演示数据 |
 | 多尺寸首屏（`node _e2e_viewport.mjs`） | 15/15 通过：320×568、360×640、375×667、390×844、430×932 下四个快捷圆钮与「喂养记录」按钮都在 TabBar 之上完整可见，且无横向溢出 |
@@ -223,6 +226,7 @@ src/
 | 我的家庭端到端（`node _e2e_profile.mjs`） | 37/37 通过：编辑宝宝资料、刷新持久化、移出家庭成员、提醒/关于页返回我的家庭 |
 | 设置与权限端到端（`node _e2e_settings.mjs`） | 27/27 通过：字体档位与持久化、减少动效、存储数值、成员权限修改与刷新保留、最后一位管理员保护、当前账号不能移出自己、头像文件上传与持久化、提醒中心按来源返回 |
 | 系统通知与提醒（`node _e2e_reminder.mjs`） | 16/16 通过：manifest 与主题色、通知权限、Service Worker 注册与激活、测试通知经 SW 发出、过期提醒自动发通知且正文带时长、同一间隔只提醒一次、提醒页标出「该喂奶了」、无脚本错误 |
+| 全部端到端（`node _e2e_all.mjs`） | 串行跑全部 20 个分项套件，逐个打印 ok/FAIL 并汇总「N/M 套通过 · 耗时」，任一失败以非 0 退出（CI 可直用）。**必须对着 `npm run dev` 的 5178 跑**：`_e2e_lightbox` 会动态 import `/src/lib/photoTone.ts`，`_e2e_back`/`_e2e_exit` 依赖 dev server 的页面生命周期，对着生产构建跑这 3 套会失败 |
 | AI 故事（`node _e2e_ai_story.mjs`） | 7/7 通过：生成入口、加载态、结果控制在 38 字内、写入状态、失败兜底、重试（每次 5 张照片）、无脚本错误 |
 | 成长相册（`node _e2e_album.mjs`） | 22/22 通过：瞬间总数、Live 封面标记、添加入口四种（照片/视频各两路）、视频上传与首帧海报、Live 导入覆盖封面、刷新后数量保留 |
 | 大图查看（`node _e2e_lightbox.mjs`） | 43/43 通过：左右箭头与滑动、双指/双击缩放、锁缩放时禁止滑动、视频与照片共用字幕、键盘方向键与 Esc、首尾边界、单图无箭头 |
@@ -326,7 +330,7 @@ src/
 3. **提醒依赖页面在前台或已安装的 PWA。** 现在到点会经 Service Worker 发系统通知，但浏览器完全退出（尤其未安装到主屏幕）时不会唤醒；真正的后台定时需要 Capacitor 本地通知或推送服务。
 4. **照片上传没有 EXIF 解析。** 拍摄时间取文件修改时间；压缩到最长边 1200 / JPEG 0.82。
 5. **会动的照片在网页端是「静态照片 + 短片」。** 浏览器拿不到 iOS Live Photo 的配对关系，也拆不开 Android Motion Photo 的内嵌视频，因此需要选择导出的短片；网页会截取首帧作为照片封面。视频可播放性取决于浏览器编解码（Chrome 不支持 HEVC）。
-6. **视频不进入 JSON 备份。** 导出只包含记录与海报索引，视频原片仍在本机 IndexedDB 中。
+6. **视频原片不进 JSON 备份。** 备份只包含数据库里的记录与海报索引（8 张表：`households`/`household_members`/`household_state`/`invites`/`users`/`sessions`/`user_state`/`media`），照片与视频文件仍在媒体库（本地 `backend/media` 或 S3 桶），需要单独备份；`--restore` 只恢复备份里实际存在的表，老备份不会清空家庭表。
 7. **仅中文界面。** 英文只出现在品牌词、眉标与字标中，尚未做 i18n。
 8. **无障碍已过 axe 自动检查，但未做真机与读屏实测。** axe-core 4.10 在 10 个路由上 0 项违规：`<main>` 地标、标题层级、文件输入标签、可聚焦轮播、辅助文字颜色对比度均已修（`--ink-2/3/4` 统一调深，最浅底色上也有 4.5:1 以上）。低端设备性能、VoiceOver/TalkBack 的实际朗读顺序仍未专项验证。
 

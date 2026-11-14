@@ -16,7 +16,6 @@ export const APP = {
 }
 
 export const API = {
-  state: '/api/state',
   dailyQuote: '/api/daily-quote',
   aiSummary: '/api/ai/summary',
   aiAnalysis: '/api/ai/analysis',
@@ -25,10 +24,9 @@ export const API = {
   aiCaption: '/api/ai/caption',
 }
 
+// 只留仍然存在的本地存储键：状态与媒体都已迁到服务端，旧的 state/mediaDb 键不再写也不再读。
 export const STORAGE_KEYS = {
-  state: 'nestory.state.v4',
   prefs: 'nestory.prefs.v1',
-  mediaDb: 'nestory.media',
 }
 
 export const NAV_TABS = [

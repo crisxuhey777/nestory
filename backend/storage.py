@@ -419,6 +419,33 @@ def list_keys(prefix: str = "", limit: int = 1000) -> list[str]:
     return keys[:limit]
 
 
+def object_size(key: str) -> int | None:
+    """对象真实大小；还没上传/已不存在时返回 None。
+
+    confirm 用它在服务端核对字节数，避免客户端把 2GB 报成 1B 绕过配额。
+    """
+    mode = driver()
+    if mode == "local":
+        path = local_path(key)
+        try:
+            return path.stat().st_size if path.is_file() else None
+        except OSError:
+            return None
+    if mode != "s3":
+        return None
+    request = _signed_request("HEAD", key)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.headers.get("Content-Length") or ""
+            return int(raw) if raw.isdigit() else None
+    except urllib.error.HTTPError as exc:
+        if exc.code in (403, 404):
+            return None
+        raise RuntimeError(f"HEAD {key} failed: {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"HEAD {key} failed: {exc.reason}") from exc
+
+
 def delete(key: str) -> None:
     mode = driver()
     if mode == "s3":

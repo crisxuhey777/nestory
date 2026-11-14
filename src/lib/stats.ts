@@ -3,14 +3,6 @@ import { DAY, isSameDay, startOfDay } from './date'
 
 export type FeedKind = 'breast' | 'bottle' | 'formula'
 
-export function feedKinds(r: FeedRecord): FeedKind[] {
-  const kinds: FeedKind[] = []
-  if (r.leftSec + r.rightSec > 0) kinds.push('breast')
-  if (r.bottleMl > 0) kinds.push('bottle')
-  if (r.formulaMl > 0) kinds.push('formula')
-  return kinds
-}
-
 export function isBreast(r: FeedRecord) {
   return r.leftSec + r.rightSec > 0
 }
@@ -109,6 +101,14 @@ export function last7Days(feeds: FeedRecord[], now = Date.now()) {
   return out
 }
 
+/** 差值展示：正数带 +，负数带 −（掉秤也要看得见）。 */
+export function signed(value: number, digits = 1): string {
+  const text = Math.abs(value).toFixed(digits)
+  if (value > 0) return `+${text}`
+  if (value < 0) return `-${text}`
+  return text
+}
+
 export function latestGrowth(growths: GrowthRecord[]): GrowthRecord | null {
   if (!growths.length) return null
   return [...growths].sort((a, b) => a.at - b.at)[growths.length - 1]
@@ -117,6 +117,14 @@ export function latestGrowth(growths: GrowthRecord[]): GrowthRecord | null {
 export function previousGrowth(growths: GrowthRecord[]): GrowthRecord | null {
   if (growths.length < 2) return null
   return [...growths].sort((a, b) => a.at - b.at)[growths.length - 2]
+}
+
+/** 某段睡眠是否和「今天」有重叠（跨午夜也算今天）。 */
+export function overlapsDay(record: { startedAt: number; endedAt?: number }, now = Date.now()) {
+  const dayStart = startOfDay(now)
+  const dayEnd = dayStart + DAY
+  const end = record.endedAt ?? now
+  return Math.min(end, dayEnd) > Math.max(record.startedAt, dayStart)
 }
 
 /** 今日睡眠累计（分钟），跨午夜的部分按重叠计算 */

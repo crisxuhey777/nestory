@@ -3,8 +3,8 @@
  * 运行：npm test
  */
 import { expect, test } from 'vitest'
-import { addMonths, ageBetween, ageLabel, daysUntilAnniversary, durationLabel, shortSpan } from '../src/lib/date'
-import { diaperCountsSince, feedIntervals, feedStats, last7Days, latestGrowth, sleepMinutesToday, sleepStatsSince } from '../src/lib/stats'
+import { addMonths, ageBetween, ageLabel, daysUntilAnniversary, durationLabel, relativeFromNow, shortSpan } from '../src/lib/date'
+import { diaperCountsSince, feedIntervals, feedStats, last7Days, latestGrowth, overlapsDay, signed, sleepMinutesToday, sleepStatsSince } from '../src/lib/stats'
 import type { FeedRecord, SleepRecord } from '../src/data/types'
 
 let pass = 0
@@ -168,6 +168,31 @@ test('生长与纪念日', () => {
     eq('距离半岁 81 天', half.days, 81)
     eq('纪念日名称', half.label, '半岁纪念')
   }
+})
+
+// ---------- 跨午夜段数与差值文案 ----------
+test('今日睡眠段数（跨午夜）与差值文案', () => {
+  const now = new Date(2026, 10, 13, 9, 0).getTime()
+  const sleeps: SleepRecord[] = [
+    { id: 'night', startedAt: new Date(2026, 10, 12, 23, 40).getTime(), endedAt: new Date(2026, 10, 13, 6, 0).getTime() },
+    { id: 'old', startedAt: new Date(2026, 10, 11, 23, 0).getTime(), endedAt: new Date(2026, 10, 12, 2, 0).getTime() },
+  ]
+  eq('跨午夜的段算进今天', sleeps.filter((s) => overlapsDay(s, now)).length, 1)
+  ok('前天的段不算今天', !overlapsDay(sleeps[1], now))
+  eq('差值正号', signed(0.3), '+0.3')
+  eq('差值负号（掉秤要看得见）', signed(-0.3), '-0.3')
+  eq('零差值不带符号', signed(0), '0.0')
+})
+
+// ---------- 相对时间文案 ----------
+test('相对时间文案（小时整点不留双空格）', () => {
+  const now = new Date(2026, 10, 13, 12, 0).getTime()
+  eq('半小时内是刚刚', relativeFromNow(now - 30 * 1000, now), '刚刚')
+  eq('分钟级', relativeFromNow(now - 18 * 60 * 1000, now), '18 分钟前')
+  eq('整小时不带分钟尾巴', relativeFromNow(now - 2 * 60 * 60 * 1000, now), '2 小时前')
+  eq('小时加分钟', relativeFromNow(now - (2 * 60 + 18) * 60 * 1000, now), '2 小时 18 分前')
+  eq('一天以上走天数', relativeFromNow(now - 26 * 60 * 60 * 1000, now), '1 天前')
+  eq('时长文案', durationLabel(746), '12 分 26 秒')
 })
 
 // ---------- 汇总 ----------

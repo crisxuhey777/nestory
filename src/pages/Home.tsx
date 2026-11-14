@@ -1,31 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../brand/icons'
 import { NestoryMark } from '../brand/Logo'
+import { HomeHero } from '../components/HomeHero'
+import { HomeAnniversary } from '../components/HomeAnniversary'
+import { HomeOverview } from '../components/HomeOverview'
 import AiThinking from '../components/AiThinking'
 import { Sheet } from '../components/Sheet'
 import { DiaperSheet, GrowthSheet, SleepSheet } from '../components/QuickSheets'
 import { FeedSheet } from '../components/FeedSheet'
-import { useStore, isAppState, uid } from '../data/store'
+import { useStore, isAppState } from '../data/store'
+import { aiPost } from '../data/api'
 import type { AppState } from '../data/types'
 import { usePrefs } from '../lib/prefs'
-import { uploadPhoto } from '../lib/media'
-import { viewerName } from '../lib/viewer'
 import {
   ageBetween,
   ageLabel,
   chineseDate,
   fromISODate,
-  isSameDay,
-  minutesLabel,
   monthDay,
-  relativeFromNow,
-  timeHM,
   daysUntilAnniversary,
 } from '../lib/date'
-import { diaperCountsToday, feedStats, latestGrowth, previousGrowth, sleepMinutesToday } from '../lib/stats'
+import {
+  diaperCountsToday,
+  feedStats,
+  latestGrowth,
+  overlapsDay,
+  previousGrowth,
+  sleepMinutesToday,
+} from '../lib/stats'
 import { navigate } from '../lib/route'
 import { usePhotoInk, usePhotoInkMap } from '../lib/photoTone'
-import { API, HERO, QUICK_ACTIONS } from '../data/config'
+import { API, HERO } from '../data/config'
 
 const QUOTE_CACHE_KEY = 'nestory.dailyQuote.v1'
 
@@ -61,19 +66,15 @@ function requestDailyQuote(key: string, state: AppState): Promise<DailyQuote | n
 
   const task = (async () => {
     try {
-      const res = await fetch(API.dailyQuote, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baby: state.baby,
-          feeds: state.feeds,
-          sleeps: state.sleeps,
-          diapers: state.diapers,
-        }),
-      })
-      if (!res.ok) return null
-      const payload = await res.json()
-      const raw = payload?.quote
+      const payload = await aiPost<{
+        quote?: { text?: unknown; label?: unknown }
+        date?: unknown
+      }>(
+        API.dailyQuote,
+        { baby: state.baby, feeds: state.feeds, sleeps: state.sleeps, diapers: state.diapers },
+        30_000,
+      )
+      const raw = payload.quote
       if (!raw || typeof raw.text !== 'string' || !raw.text.trim()) return null
       const next: DailyQuote = {
         date: typeof payload.date === 'string' ? payload.date : dateKey(new Date()),
@@ -139,10 +140,6 @@ export default function HomePage() {
     status: 'idle',
   })
   const [annivOpen, setAnnivOpen] = useState(false)
-  const [annivNote, setAnnivNote] = useState('')
-  const [annivPhoto, setAnnivPhoto] = useState<{ file: File; url: string } | null>(null)
-  const [annivBusy, setAnnivBusy] = useState(false)
-  const annivInput = useRef<HTMLInputElement>(null)
   const heroTrack = useRef<HTMLDivElement>(null)
   const pausedUntil = useRef(0)
 
@@ -250,15 +247,11 @@ export default function HomePage() {
     if (ai.status === 'loading') return
     setAi({ status: 'loading' })
     try {
-      const res = await fetch(API.aiSummary, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ state }),
-      })
-      if (!res.ok) {
-        throw new Error('AI 暂时不可用，请稍后再试')
-      }
-      const payload = await res.json()
+      const payload = await aiPost<{ state: unknown; ai?: { title?: unknown; note?: unknown } }>(
+        API.aiSummary,
+        { state },
+        120_000,
+      )
       if (!isAppState(payload.state)) throw new Error('生成失败，请稍后再试')
       dispatch({ type: 'hydrate', state: payload.state })
       setAi({
@@ -280,7 +273,8 @@ export default function HomePage() {
   const stats = feedStats(state.feeds, state.reminder.intervalMinutes, now)
   const sleepMinutes = sleepMinutesToday(state.sleeps, now)
   const diapers = diaperCountsToday(state.diapers, now)
-  const sleepSegments = state.sleeps.filter((s) => isSameDay(s.startedAt, now)).length
+  // 跨午夜的睡眠段也算今天：否则「8 小时 20 分 · 0 段」会自相矛盾。
+  const sleepSegments = state.sleeps.filter((s) => overlapsDay(s, now)).length
   const latest = latestGrowth(state.growths)
   const prev = previousGrowth(state.growths)
   const next = hasBirth ? daysUntilAnniversary(state.baby.birthday, new Date(now)) : null
@@ -301,292 +295,46 @@ export default function HomePage() {
   const weightDelta =
     latest?.weightKg != null && prev?.weightKg != null ? latest.weightKg - prev.weightKg : null
 
-  const closeAnniversary = () => {
-    setAnnivOpen(false)
-    setAnnivNote('')
-    setAnnivBusy(false)
-    setAnnivPhoto((current) => {
-      if (current) URL.revokeObjectURL(current.url)
-      return null
-    })
-  }
-
-  const pickAnniversaryPhoto = (file: File | undefined, input: HTMLInputElement) => {
-    input.value = ''
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      toast('先选一张照片')
-      return
-    }
-    setAnnivPhoto((current) => {
-      if (current) URL.revokeObjectURL(current.url)
-      return { file, url: URL.createObjectURL(file) }
-    })
-  }
-
-  const saveAnniversary = async () => {
-    if (!next || annivBusy) return
-    const note = annivNote.trim()
-    if (!note && !annivPhoto) {
-      toast('写一句话，或选一张照片')
-      return
-    }
-    setAnnivBusy(true)
-    try {
-      const at = Date.now()
-      if (annivPhoto) {
-        const { url, thumb } = await uploadPhoto(annivPhoto.file)
-        dispatch({
-          type: 'addPhoto',
-          photo: {
-            id: uid('ph'),
-            src: url,
-            thumb,
-            at,
-            caption: note || next.label,
-            author: viewerName(state),
-            kind: 'photo',
-          },
-        })
-      }
-      dispatch({
-        type: 'addMilestone',
-        milestone: {
-          id: uid('ms'),
-          at,
-          title: next.label,
-          note: note || undefined,
-          kind: 'anniversary',
-          birthday: state.baby.birthday || undefined,
-        },
-      })
-      toast(`已记下${next.label}`)
-      closeAnniversary()
-    } catch (error) {
-      toast(error instanceof Error ? error.message : '保存失败，再试一次')
-      setAnnivBusy(false)
-    }
-  }
-
   return (
     <div className="page">
-      <header
-        className={`hero${heroSlides.length ? '' : ' hero--empty'}`}
-        data-photo-ink={activeHeroTone}
-      >
-        <div
-          className="hero__track"
-          ref={heroTrack}
-          onScroll={(event) => {
-            const track = event.currentTarget
-            const next = Math.round(track.scrollLeft / track.clientWidth)
-            if (next !== heroSlide) setHeroSlide(next)
-          }}
-          aria-label={heroSlides.length ? `宝宝照片，共 ${heroSlides.length} 张` : '宝宝照片'}
-          role="group"
-          tabIndex={0}
-          onKeyDown={(event) => {
-            if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
-            event.preventDefault()
-            const step = event.key === 'ArrowRight' ? 1 : -1
-            const next = Math.max(0, Math.min(heroSlides.length - 1, heroSlide + step))
-            event.currentTarget.scrollTo({ left: next * event.currentTarget.clientWidth, behavior: 'smooth' })
-            setHeroSlide(next)
-            pausedUntil.current = Date.now() + HERO.pauseMs
-          }}
-          onPointerDown={() => {
-            pausedUntil.current = Date.now() + HERO.pauseMs
-          }}
-        >
-          {heroSlides.map((photo, index) => (
-            <div className="hero__slide" key={photo.id} aria-hidden={index !== heroSlide}>
-              <img
-                ref={index === heroSlide ? heroImgRef : undefined}
-                className="hero__img"
-                src={photo.src}
-                alt={photo.alt}
-                loading="eager"
-                decoding="async"
-                draggable={false}
-              />
-            </div>
-          ))}
-        </div>
-        <div className="hero__veil" />
-        {heroSlides.length === 0 ? (
-          <div className="hero__empty-mark" aria-hidden="true">
-            <NestoryMark size={132} tone="light" />
-          </div>
-        ) : null}
-        <div className="hero__top">
-          <div className="hero__brand">
-            <NestoryMark size={30} tone="light" />
-            <span className="hero__brand-copy">
-              <span className="hero__brand-name">Nestory</span>
-              <span className="hero__brand-tag">{HERO.brandTag}</span>
-            </span>
-          </div>
-          <button
-            className="icon-btn icon-btn--light"
-            aria-label="设置首页照片"
-            onClick={openPhotoSheet}
-          >
-            <Icon name="settings" size={19} />
-          </button>
-        </div>
+      <HomeHero
+        slides={heroSlides}
+        index={heroSlide}
+        onIndex={setHeroSlide}
+        trackRef={heroTrack}
+        imgRef={heroImgRef}
+        tone={activeHeroTone}
+        onPause={() => {
+          pausedUntil.current = Date.now() + HERO.pauseMs
+        }}
+        onOpenSettings={openPhotoSheet}
+        onGo={goHero}
+        dateLabel={chineseDate(now)}
+        babyName={state.baby.name.trim() || '宝宝'}
+        meta={age ? { age: ageLabel(age), totalDays: age.totalDays } : null}
+        birthday={state.baby.birthday}
+        quoteLabel={quote?.label}
+        quoteText={quote?.text ?? HERO.quote}
+      />
 
-        <div className="hero__content">
-          <div className="hero__date">{chineseDate(now)}</div>
-          <h1 className="hero__name">{state.baby.name.trim() || '宝宝'}</h1>
-          <div className="hero__meta">
-            {age ? (
-              <>
-                <span>{ageLabel(age)}</span>
-                <i />
-                <span>第 {age.totalDays} 天</span>
-                <i />
-                <span>{state.baby.birthday.replace(/-/g, '.')} 出生</span>
-              </>
-            ) : (
-              <span>还没有填写出生日期，可在「我的」里补上</span>
-            )}
-          </div>
-          {quote?.label ? <p className="hero__occasion">{quote.label}</p> : null}
-          <p className="hero__quote">
-            <span className="hero__quote-text" key={quote?.text ?? HERO.quote}>
-              {quote?.text ?? HERO.quote}
-            </span>
-          </p>
-          <div className="hero__dots" role="group" aria-label="切换首页照片">
-            {heroSlides.map((photo, index) => (
-              <button
-                key={photo.id}
-                type="button"
-                className={`hero__dot${index === heroSlide ? ' hero__dot--on' : ''}`}
-                aria-label={`第 ${index + 1} 张照片`}
-                aria-current={index === heroSlide ? 'true' : undefined}
-                onClick={() => goHero(index)}
-              />
-            ))}
-          </div>
-        </div>
-      </header>
-
-      <section className="quick-strip" aria-label="快速记录">
-        <div className="quick">
-          {QUICK_ACTIONS.map((action) => (
-            <button
-              key={action.key}
-              className="quick__item"
-              aria-label={`快速记录${action.label}`}
-              onClick={() => setSheet(action.target)}
-            >
-              <span className="quick__circle">
-                <Icon name={action.icon} size={action.key === 'feed' ? 25 : 24} />
-              </span>
-              <span className="quick__label">{action.label}</span>
-            </button>
-          ))}
-        </div>
-        <button
-          className="overview__cta quick-strip__cta"
-          aria-label="查看喂养记录"
-          onClick={() => navigate('feed')}
-        >
-          <Icon name="clock" size={22} />
-          <span className="overview__cta-main">
-            <span className="overview__cta-title">喂养记录</span>
-            <span className="overview__cta-sub">
-              {stats.lastAt
-                ? `上次 ${timeHM(stats.lastAt)} · 已过 ${minutesLabel(stats.sinceLastMin)}`
-                : '还没有记录，从第一餐开始'}
-            </span>
-          </span>
-          <Icon name="arrowRight" size={18} />
-        </button>
-      </section>
-
-      <section className="overview" aria-label="今日成长摘要">
-        <div className="overview__head">
-          <span className="overview__title">今日成长摘要</span>
-        </div>
-        <div className="overview__grid">
-          <div className="overview__cell">
-            <div className="overview__value">
-              {stats.count}
-              <small>次</small>
-            </div>
-            <div className="overview__label">今日喂养</div>
-          </div>
-          <div className="overview__cell">
-            <div className="overview__value">
-              {stats.totalMl}
-              <small>ml</small>
-            </div>
-            <div className="overview__label">瓶喂记录量</div>
-          </div>
-          <div className="overview__cell">
-            <div className="overview__value" style={{ fontSize: 'calc(19px * var(--type-scale, 1))', letterSpacing: 0 }}>
-              {stats.lastAt ? relativeFromNow(stats.lastAt, now) : '还没有'}
-            </div>
-            <div className="overview__label">
-              最近喂养{stats.lastAt ? ` · ${timeHM(stats.lastAt)}` : ''}
-            </div>
-          </div>
-          <div className="overview__cell">
-            {latest?.weightKg != null ? (
-              <div className="overview__value">
-                {latest.weightKg.toFixed(1)}
-                <small>kg</small>
-              </div>
-            ) : (
-              <div className="overview__value" style={{ fontSize: 'calc(19px * var(--type-scale, 1))', letterSpacing: 0 }}>
-                还没有
-              </div>
-            )}
-            <div className="overview__label">
-              最近体重{weightDelta ? ` · 较上次 +${weightDelta.toFixed(1)}` : ''}
-            </div>
-          </div>
-          <div className="overview__cell">
-            <div className="overview__value">
-              {Math.floor(sleepMinutes / 60)}
-              <small>小时</small>
-              {Math.round(sleepMinutes % 60)}
-              <small>分</small>
-            </div>
-            <div className="overview__label">今日睡眠 · {sleepSegments} 段</div>
-          </div>
-          <div className="overview__cell">
-            <div className="overview__value">
-              {diapers.total}
-              <small>次</small>
-            </div>
-            <div className="overview__label">
-              今日尿布 · 湿 {diapers.wet} / 脏 {diapers.dirty}
-            </div>
-          </div>
-        </div>
-
-        {state.reminder.enabled && stats.nextReminderAt ? (
-          <button
-            type="button"
-            className="overview__remind"
-            onClick={() => navigate('reminders', 'home')}
-            aria-label="打开提醒中心"
-          >
-            <Icon name="clock" size={13} />
-            <span>
-              下次提醒 <b>{remainingMin != null && remainingMin > 0 ? `${minutesLabel(remainingMin)}后` : '现在'}</b>
-            </span>
-            <span className="overview__bar">
-              <span style={{ width: `${remindProgress * 100}%` }} />
-            </span>
-          </button>
-        ) : null}
-
-      </section>
-
+      <HomeOverview
+        stats={stats}
+        now={now}
+        sleepMinutes={sleepMinutes}
+        sleepSegments={sleepSegments}
+        diapers={diapers}
+        latestWeightKg={latest?.weightKg ?? null}
+        weightDelta={weightDelta}
+        reminder={{
+          enabled: state.reminder.enabled,
+          nextAt: stats.nextReminderAt,
+          remainingMin,
+          progress: remindProgress,
+        }}
+        onQuick={setSheet}
+        onOpenFeed={() => navigate('feed')}
+        onOpenReminders={() => navigate('reminders', 'home')}
+      />
       <section className="section" style={{ marginTop: 26, display: hasActivity ? undefined : 'none' }}>
         <div className={`ai-card${ai.status === 'done' ? ' ai-card--done' : ''}`}>
           <div className="ai-card__head">
@@ -713,7 +461,7 @@ export default function HomePage() {
                       onClick={() => openPicker(index)}
                       aria-label={`第 ${index + 1} 张，${photo.caption}，点击更换`}
                     >
-                      <img src={photo.thumb} alt="" loading="lazy" />
+                      <img src={photo.thumb || photo.src} alt="" loading="lazy" decoding="async" />
                       <span className="hero-cell__no">{index + 1}</span>
                       <span className="hero-cell__cap">{photo.caption}</span>
                     </button>
@@ -788,7 +536,7 @@ export default function HomePage() {
                     aria-pressed={current}
                     aria-label={`${photo.caption}${used >= 0 ? `，当前第 ${used + 1} 张` : ''}`}
                   >
-                    <img src={photo.thumb} alt="" loading="lazy" />
+                    <img src={photo.thumb || photo.src} alt="" loading="lazy" decoding="async" />
                     {current ? (
                       <span className="hero-pick__no">
                         <Icon name="check" size={10} />
@@ -808,58 +556,12 @@ export default function HomePage() {
         )}
       </Sheet>
 
-      <Sheet
+      <HomeAnniversary
         open={annivOpen}
-        onClose={closeAnniversary}
-        title={next?.label ?? '纪念日'}
-        desc={
-          next
-            ? `今天是${state.baby.name ? `${state.baby.name}的` : ''}${next.label}。留下一张照片和一句话，会出现在成长时间轴。`
-            : ''
-        }
-        footer={
-          <div className="anniversary-foot">
-            <button className="btn btn--quiet" onClick={closeAnniversary} type="button">
-              先不记
-            </button>
-            <button className="btn btn--primary" onClick={saveAnniversary} disabled={annivBusy} type="button">
-              {annivBusy ? '保存中…' : '记下来'}
-            </button>
-          </div>
-        }
-      >
-        <div className="anniversary-form">
-          <label className="field">
-            <span className="field__label">今天的一句话</span>
-            <textarea
-              className="input"
-              value={annivNote}
-              onChange={(event) => setAnnivNote(event.target.value)}
-              placeholder="比如：第一次抬头看我们。"
-              rows={3}
-              maxLength={200}
-            />
-          </label>
-          <button type="button" className="anniversary-photo" onClick={() => annivInput.current?.click()}>
-            {annivPhoto ? (
-              <img src={annivPhoto.url} alt="" />
-            ) : (
-              <>
-                <Icon name="camera" size={18} />
-                <span>选一张今天的照片（可跳过）</span>
-              </>
-            )}
-          </button>
-          <input
-            ref={annivInput}
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(event) => pickAnniversaryPhoto(event.target.files?.[0], event.currentTarget)}
-            aria-label="选择纪念日照片"
-          />
-        </div>
-      </Sheet>
+        onClose={() => setAnnivOpen(false)}
+        label={next?.label}
+        birthday={state.baby.birthday}
+      />
 
       <FeedSheet open={sheet === 'feed'} onClose={() => setSheet(null)} />
       <DiaperSheet open={sheet === 'diaper'} onClose={() => setSheet(null)} />

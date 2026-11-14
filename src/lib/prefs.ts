@@ -6,7 +6,6 @@ export type FontSize = 'small' | 'normal' | 'large' | 'xlarge'
 export type Prefs = {
   fontSize: FontSize
   reduceMotion: boolean
-  analytics: boolean
 }
 
 const KEY = STORAGE_KEYS.prefs
@@ -15,11 +14,7 @@ export const FONT_SCALE = Object.fromEntries(
   FONT_OPTIONS.map((option) => [option.key, option.scale]),
 ) as Record<FontSize, number>
 
-export const FONT_LABEL = Object.fromEntries(
-  FONT_OPTIONS.map((option) => [option.key, option.label]),
-) as Record<FontSize, string>
-
-const DEFAULTS: Prefs = { fontSize: 'normal', reduceMotion: false, analytics: false }
+const DEFAULTS: Prefs = { fontSize: 'normal', reduceMotion: false }
 
 export function loadPrefs(): Prefs {
   try {
@@ -29,7 +24,6 @@ export function loadPrefs(): Prefs {
     return {
       fontSize: parsed.fontSize && parsed.fontSize in FONT_SCALE ? parsed.fontSize : 'normal',
       reduceMotion: Boolean(parsed.reduceMotion),
-      analytics: Boolean(parsed.analytics),
     }
   } catch {
     return DEFAULTS
