@@ -748,17 +748,9 @@ export default function AlbumPage() {
             : `${visible.length} 个瞬间 · ${scope ?? ''}`
         }
         right={
-          <div className="album-head-actions">
-            {canDelete && photos.length && !selectMode ? (
-              <button type="button" className="album-select-btn" onClick={() => setSelectMode(true)}>
-                <Icon name="check" size={13} />
-                选择
-              </button>
-            ) : null}
-            <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={19} />
-            </button>
-          </div>
+          <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
+            <Icon name="plus" size={19} />
+          </button>
         }
       />
 
@@ -802,6 +794,12 @@ export default function AlbumPage() {
               </button>
             ))}
           </div>
+          {canDelete && photos.length && !selectMode ? (
+            <button type="button" className="album-select-btn" onClick={() => setSelectMode(true)}>
+              <Icon name="check" size={13} />
+              选择
+            </button>
+          ) : null}
         </div>
 
         {groups.length === 0 ? (

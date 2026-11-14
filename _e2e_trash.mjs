@@ -122,7 +122,7 @@ const beforeCount = (before.photos || []).length
 const firstCaption = (before.photos || [])[0]?.caption ?? ''
 
 try {
-  check('相册标题栏有选择按钮', (await evaluate(`!!document.querySelector('.album-select-btn')`)) === true)
+  check('筛选行右侧有选择按钮', (await evaluate(`!!document.querySelector('.album-select-btn')`)) === true)
   await evaluate(`document.querySelector('.album-select-btn').click()`)
   await waitFor(`!!document.querySelector('.album-card--selectable')`)
   check(

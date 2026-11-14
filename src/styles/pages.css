@@ -4475,25 +4475,15 @@
 }
 
 /* ---------- album delete + trash ---------- */
-.album-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 15px;
-}
-
-.album-head-actions .icon-btn {
-  margin-top: 0;
-}
-
 .album-select-btn {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 40px;
-  padding: 0 14px;
+  height: 34px;
+  padding: 0 12px;
   border-radius: 999px;
-  font-size: calc(13px * var(--type-scale, 1));
+  font-size: calc(12.5px * var(--type-scale, 1));
   color: var(--forest);
   background: var(--ivory-deep);
 }
@@ -4503,6 +4493,9 @@
 }
 
 .album-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-top: 16px;
 }
 
