@@ -8,6 +8,7 @@ import BootScreen from '../components/Boot'
 import { normalizeBirthState } from '../lib/birth'
 import { pruneTrash } from '../lib/trash'
 import { haptic } from '../lib/notify'
+import { retryDelay } from '../lib/retry'
 import { useReminderAlert } from '../lib/useReminderAlert'
 
 export { isAppState }
@@ -322,8 +323,29 @@ function ReadyStore({
   const saveChain = useRef<Promise<unknown>>(Promise.resolve())
   const latestState = useRef(state)
   const dirty = useRef(false)
+  /** 失败重试的定时器与次数（网络恢复前一直留着，别把改动丢掉）。 */
+  const retryTimer = useRef<number | null>(null)
+  const retryAttempt = useRef(0)
+  /** 重试时总是发最新快照；这里由渲染期赋值，避免 queueSave 依赖自己。 */
+  const retryRef = useRef<() => void>(() => undefined)
   /** reload() 带回来的状态不需要再回写一遍（只读成员回写还会 403） */
   const skipNextSave = useRef(false)
+
+  const clearRetry = useCallback(() => {
+    if (retryTimer.current === null) return
+    window.clearTimeout(retryTimer.current)
+    retryTimer.current = null
+  }, [])
+
+  const armRetry = useCallback(() => {
+    if (retryTimer.current !== null) return
+    const delay = retryDelay(retryAttempt.current)
+    retryAttempt.current += 1
+    retryTimer.current = window.setTimeout(() => {
+      retryTimer.current = null
+      retryRef.current()
+    }, delay)
+  }, [])
 
   const recordSaveError = useCallback((message: string) => {
     try {
@@ -365,6 +387,8 @@ function ReadyStore({
         .catch(() => undefined)
         .then(() => api.saveState(snapshot, keepalive))
         .then(() => {
+          clearRetry()
+          retryAttempt.current = 0
           clearSaveError()
           if (latestState.current === snapshot) dirty.current = false
         })
@@ -375,14 +399,34 @@ function ReadyStore({
             return
           }
           const now = Date.now()
-          if (now - lastSaveError.current < 8000) return
-          lastSaveError.current = now
-          toast(error instanceof Error ? `保存失败：${error.message}` : '保存失败')
+          if (now - lastSaveError.current >= 8000) {
+            lastSaveError.current = now
+            toast(error instanceof Error ? `保存失败：${error.message}` : '保存失败')
+          }
+          // 网络/服务端临时故障：改动留在 dirty 里，按退避节奏重发。
+          armRetry()
         })
       return saveChain.current
     },
-    [clearSaveError, recordSaveError, signOut, toast],
+    [armRetry, clearRetry, clearSaveError, recordSaveError, signOut, toast],
   )
+
+  retryRef.current = () => {
+    if (!dirty.current) return
+    void queueSave(latestState.current)
+  }
+
+  // 网络恢复时立刻补发，不用等下一个退避周期。
+  useEffect(() => {
+    const retryNow = () => {
+      if (!dirty.current) return
+      clearRetry()
+      retryAttempt.current = 0
+      void queueSave(latestState.current)
+    }
+    window.addEventListener('online', retryNow)
+    return () => window.removeEventListener('online', retryNow)
+  }, [clearRetry, queueSave])
 
   /** 立即把未保存的改动补发出去（卸载 / 切后台 / 退出登录前）。 */
   const flushPending = useCallback(
@@ -414,8 +458,9 @@ function ReadyStore({
   useEffect(() => {
     return () => {
       void flushPending(true)
+      clearRetry()
     }
-  }, [flushPending])
+  }, [clearRetry, flushPending])
 
   // 每次改动后自动保存（800ms 防抖），并用串行链避免旧请求覆盖新状态
   useEffect(() => {

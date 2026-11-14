@@ -114,6 +114,38 @@ try {
   const onText = await evaluate(`document.querySelector('.interval-picker button.on')?.textContent || ''`)
   check('刷新后仍是新值', onText.startsWith(label), onText)
 
+  // 断网时改动不丢：保存失败要留下痕迹，恢复网络后自动补发。
+  await send('Network.enable')
+  await send('Network.emulateNetworkConditions', {
+    offline: true,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  })
+  await sleep(300)
+  await evaluate(`[...document.querySelectorAll('.interval-picker button')].find(b => b.textContent.startsWith('4'))?.click()`)
+  await sleep(2600)
+  const pendingMark = await evaluate(`localStorage.getItem('nestory.unsaved') || ''`)
+  check('断网保存失败被记住', pendingMark.length > 0, pendingMark)
+  await send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  })
+  let recovered = false
+  for (let i = 0; i < 50; i++) {
+    const v = await evaluate(`fetch('/api/state').then(r => r.json()).then(d => d.state.reminder.intervalMinutes)`, true)
+    if (v === 240) {
+      recovered = true
+      break
+    }
+    await sleep(500)
+  }
+  check('恢复网络后自动补发', recovered)
+  const clearedMark = await evaluate(`localStorage.getItem('nestory.unsaved') || ''`)
+  check('补发成功后清掉失败标记', clearedMark === '', clearedMark)
+
   // 还原成 3 小时，别把演示数据改坏
   await evaluate(`[...document.querySelectorAll('.interval-picker button')].find(b => b.textContent.startsWith('3'))?.click()`)
   await sleep(1500)
