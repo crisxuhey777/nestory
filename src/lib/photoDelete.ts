@@ -55,3 +55,24 @@ export async function deletePhotos(photos: Photo[]): Promise<DeletePhotosResult>
 
   return { removed, avatarBlocked, failed }
 }
+
+/**
+ * 恢复一张照片背后的全部媒体记录。
+ * - 身上没有任何媒体 id（早期 base64 或纯本地条目）：返回 false，交给调用方按本地条目处理；
+ * - 主记录的错误（404 没副本 / 410 超过 7 天）抛给调用方，保持原有提示；
+ * - 缩略图、视频、Live 片段尽力恢复，单个失败不影响整张照片。
+ */
+export async function restoreMedia(photo: Photo): Promise<boolean> {
+  const ids = mediaIdsOfPhoto(photo)
+  if (!ids.length) return false
+  const [primary, ...rest] = ids
+  let primaryError: unknown = null
+  try {
+    await mediaApi.restore(primary)
+  } catch (err) {
+    primaryError = err
+  }
+  await Promise.all(rest.map((mediaId) => mediaApi.restore(mediaId).catch(() => undefined)))
+  if (primaryError) throw primaryError
+  return true
+}

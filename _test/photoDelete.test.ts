@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Photo } from '../src/data/types'
 
 const remove = vi.fn()
+const restore = vi.fn()
 
 vi.mock('../src/data/api', () => {
   class ApiError extends Error {
@@ -13,10 +14,10 @@ vi.mock('../src/data/api', () => {
       this.code = code
     }
   }
-  return { ApiError, mediaApi: { remove } }
+  return { ApiError, mediaApi: { remove, restore } }
 })
 
-const { deletePhotos } = await import('../src/lib/photoDelete')
+const { deletePhotos, restoreMedia } = await import('../src/lib/photoDelete')
 const { ApiError } = await import('../src/data/api')
 
 function photo(id: string): Photo {
@@ -74,5 +75,49 @@ describe('deletePhotos', () => {
     expect(result.failed).toBe(false)
     expect(result.avatarBlocked).toBe(false)
     expect(result.removed.map((p) => p.id)).toEqual(['p1'])
+  })
+})
+
+describe('restoreMedia', () => {
+  beforeEach(() => {
+    restore.mockReset()
+    restore.mockResolvedValue({ url: '/api/media/blob/x' })
+  })
+
+  it('恢复一张照片背后的全部媒体记录', async () => {
+    const live: Photo = {
+      ...photo('p1'),
+      video: `/api/media/blob/${'c'.repeat(32)}`,
+      motion: { video: `/api/media/blob/${'d'.repeat(32)}` },
+    }
+    const ok = await restoreMedia(live)
+    expect(ok).toBe(true)
+    expect(restore).toHaveBeenCalledTimes(4)
+    expect(restore.mock.calls.map((c) => c[0])).toEqual([
+      'a'.repeat(32),
+      'b'.repeat(32),
+      'c'.repeat(32),
+      'd'.repeat(32),
+    ])
+  })
+
+  it('没有任何媒体 id 时返回 false，交给本地条目处理', async () => {
+    const local: Photo = {
+      ...photo('p1'),
+      src: 'data:image/jpeg;base64,AAA',
+      thumb: 'data:image/jpeg;base64,BBB',
+    }
+    const ok = await restoreMedia(local)
+    expect(ok).toBe(false)
+    expect(restore).not.toHaveBeenCalled()
+  })
+
+  it('主记录超过 7 天时抛错，但缩略图仍尝试恢复', async () => {
+    restore.mockImplementation(async (id: string) => {
+      if (id.startsWith('a')) throw new ApiError(410, 'trash_expired', '超过 7 天')
+      return { url: '/api/media/blob/x' }
+    })
+    await expect(restoreMedia(photo('p1'))).rejects.toThrow('超过 7 天')
+    expect(restore).toHaveBeenCalledTimes(2)
   })
 })

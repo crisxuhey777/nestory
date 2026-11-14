@@ -8,6 +8,7 @@ import { getRouteFrom, navigate } from '../lib/route'
 import type { Route } from '../lib/route'
 import { monthDay } from '../lib/date'
 import { mediaIdsOf } from '../lib/media'
+import { mediaIdsOfPhoto, restoreMedia } from '../lib/photoDelete'
 import type { Photo, TrashItem } from '../data/types'
 
 const DAY = 86_400_000
@@ -64,15 +65,14 @@ export default function TrashPage() {
   // 否则 7 天后对象被清掉，相册里只会剩一张裂图。
   const restoreLocal = async (entry: TrashItem) => {
     if (busyId) return
-    const id = mediaIdsOf(entry.src, entry.thumb)[0]
-    if (!id) {
+    if (!mediaIdsOfPhoto(entry).length) {
       dispatch({ type: 'restorePhotos', ids: [entry.id] })
       toast('已恢复到相册（这张照片没有云端副本）')
       return
     }
     setBusyId(entry.id)
     try {
-      await mediaApi.restore(id)
+      await restoreMedia(entry)
       dispatch({ type: 'restorePhotos', ids: [entry.id] })
       toast('已恢复到相册')
     } catch (err) {
@@ -93,11 +93,12 @@ export default function TrashPage() {
     if (busyId) return
     setBusyId(item.id)
     try {
-      await mediaApi.restore(item.id)
       const saved = local.get(item.id)
       if (saved) {
+        await restoreMedia(saved)
         dispatch({ type: 'restorePhotos', ids: [saved.id] })
       } else {
+        await mediaApi.restore(item.id)
         dispatch({
           type: 'addPhoto',
           photo: {
