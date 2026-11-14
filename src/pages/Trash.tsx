@@ -4,7 +4,8 @@ import { ScreenHead } from '../components/Common'
 import { useStore } from '../data/store'
 import { ApiError, mediaApi } from '../data/api'
 import type { TrashItemDto } from '../data/api'
-import { navigate } from '../lib/route'
+import { getRouteFrom, navigate } from '../lib/route'
+import type { Route } from '../lib/route'
 import { monthDay } from '../lib/date'
 import type { Photo, TrashItem } from '../data/types'
 
@@ -23,6 +24,8 @@ function daysLeft(expiresAt: string | null): number {
 
 export default function TrashPage() {
   const { state, dispatch, toast } = useStore()
+  const from: Route = getRouteFrom() === 'profile' ? 'profile' : 'album'
+  const backLabel = from === 'profile' ? '回到我的' : '回到相册'
   const isAdmin = state.family.some((m) => m.id === state.viewerId && m.permission === 'admin')
   const [items, setItems] = useState<TrashItemDto[] | null>(null)
   const [error, setError] = useState('')
@@ -106,7 +109,7 @@ export default function TrashPage() {
   if (!isAdmin) {
     return (
       <div className="page page--sub">
-        <ScreenHead title="最近删除" sub="RECENTLY DELETED" back="album" />
+        <ScreenHead title="最近删除" sub="RECENTLY DELETED" back={from} />
         <div className="page__body">
           <div className="empty" style={{ paddingTop: 60 }}>
             只有家庭管理员可以查看最近删除。
@@ -118,7 +121,7 @@ export default function TrashPage() {
 
   return (
     <div className="page page--sub">
-      <ScreenHead title="最近删除" sub="RECENTLY DELETED" back="album" />
+      <ScreenHead title="最近删除" sub="RECENTLY DELETED" back={from} />
       <div className="page__body">
         <p className="about-note" style={{ marginTop: 0 }}>
           删掉的照片会在这里留 7 天。7 天后自动彻底删除，无法找回。
@@ -203,8 +206,8 @@ export default function TrashPage() {
           </div>
         )}
 
-        <button type="button" className="link-btn" style={{ marginTop: 24 }} onClick={() => navigate('album', 'trash')}>
-          回到相册
+        <button type="button" className="link-btn" style={{ marginTop: 24 }} onClick={() => navigate(from, 'trash')}>
+          {backLabel}
         </button>
       </div>
     </div>

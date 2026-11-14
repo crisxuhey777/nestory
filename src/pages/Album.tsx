@@ -14,7 +14,6 @@ import { hasMotion, isVideoPhoto, motionOf } from '../lib/photo'
 import { isBeforeBirth } from '../lib/birth'
 import { MEDIA_GROUPS, MEDIA_LIMITS } from '../data/config'
 import { ApiError, mediaApi } from '../data/api'
-import { navigate } from '../lib/route'
 
 /** Badge for a motion clip: LIVE for live photos, length for videos. */
 async function requestCaptionTitles(src: string, hint: string): Promise<string[]> {
@@ -749,9 +748,17 @@ export default function AlbumPage() {
             : `${visible.length} 个瞬间 · ${scope ?? ''}`
         }
         right={
-          <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
-            <Icon name="plus" size={19} />
-          </button>
+          <div className="album-head-actions">
+            {canDelete && photos.length && !selectMode ? (
+              <button type="button" className="album-select-btn" onClick={() => setSelectMode(true)}>
+                <Icon name="check" size={13} />
+                选择
+              </button>
+            ) : null}
+            <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={19} />
+            </button>
+          </div>
         }
       />
 
@@ -795,11 +802,6 @@ export default function AlbumPage() {
               </button>
             ))}
           </div>
-          {canDelete && photos.length && !selectMode ? (
-            <button type="button" className="album-select-toggle" onClick={() => setSelectMode(true)}>
-              选择
-            </button>
-          ) : null}
         </div>
 
         {groups.length === 0 ? (
@@ -847,13 +849,6 @@ export default function AlbumPage() {
           <br />
           Nestory 珍藏每一个普通的日子。
         </p>
-
-        {canDelete ? (
-          <button type="button" className="album-trash-link" onClick={() => navigate('trash', 'album')}>
-            <Icon name="trash" size={14} />
-            最近删除
-          </button>
-        ) : null}
       </div>
 
       {selectMode ? (

@@ -122,8 +122,8 @@ const beforeCount = (before.photos || []).length
 const firstCaption = (before.photos || [])[0]?.caption ?? ''
 
 try {
-  check('相册标题栏有「选择」', (await evaluate(`!!document.querySelector('.album-select-toggle')`)) === true)
-  await evaluate(`document.querySelector('.album-select-toggle').click()`)
+  check('相册标题栏有选择按钮', (await evaluate(`!!document.querySelector('.album-select-btn')`)) === true)
+  await evaluate(`document.querySelector('.album-select-btn').click()`)
   await waitFor(`!!document.querySelector('.album-card--selectable')`)
   check(
     '进入多选后每张照片都有勾选位',
@@ -168,9 +168,15 @@ try {
     JSON.stringify((afterDelete?.trash || [])[0] ?? null),
   )
 
-  await evaluate(`document.querySelector('.album-trash-link').click()`)
+  await goto(BASE + '/?e2e=trash#/profile')
+  const trashEntry = await evaluate(
+    `(() => { const el = [...document.querySelectorAll('.setting')].find((n) => n.textContent.includes('最近删除')); el?.click(); return !!el })()`,
+  )
+  check('我的页面有「最近删除」入口', trashEntry === true)
   await waitFor(`location.hash.startsWith('#/trash')`)
+  check('从我的进入最近删除', (await evaluate(`location.hash`)).includes('from=profile'))
   await waitFor('!!document.querySelector(".trash-card")')
+  check('可回到我的', (await evaluate(`document.body.innerText.includes('回到我的')`)) === true)
   const card = await evaluate(`document.querySelector('.trash-card')?.innerText.replace(/\\s+/g, ' ').trim()`)
   check('最近删除页列出刚删的照片', card.includes(firstCaption) && card.includes('还剩 7 天'), card)
 

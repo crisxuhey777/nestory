@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import { Icon } from '../brand/icons'
 import { NestoryLogo } from '../brand/Logo'
 import { Sheet } from '../components/Sheet'
@@ -106,6 +106,8 @@ export default function ProfilePage() {
       if (avatarRef.current) avatarRef.current.value = ''
     }
   }
+
+  const canDelete = state.family.some((m) => m.id === state.viewerId && m.permission === 'admin')
 
   const menuActions: Record<(typeof PROFILE_MENU)[number]['key'], () => void> = {
     settings: () => navigate('settings'),
@@ -225,21 +227,39 @@ export default function ProfilePage() {
           </div>
           <div className="settings">
             {rows.map((r) => (
-              <button key={r.title} className="setting" onClick={r.onClick}>
-                <span className="setting__icon">
-                  <Icon name={r.icon} size={18} />
-                </span>
-                <span className="setting__main">
-                  <span className="setting__title">{r.title}</span>
-                  <span className="setting__sub" style={{ display: 'block' }}>
-                    {r.sub}
+              <Fragment key={r.title}>
+                {r.key === 'about' && canDelete ? (
+                  <button className="setting" onClick={() => navigate('trash', 'profile')}>
+                    <span className="setting__icon">
+                      <Icon name="trash" size={18} />
+                    </span>
+                    <span className="setting__main">
+                      <span className="setting__title">最近删除</span>
+                      <span className="setting__sub" style={{ display: 'block' }}>
+                        7 天内可恢复 · 仅管理员
+                      </span>
+                    </span>
+                    <span className="setting__value">
+                      <Icon name="chevronRight" size={12} />
+                    </span>
+                  </button>
+                ) : null}
+                <button className="setting" onClick={r.onClick}>
+                  <span className="setting__icon">
+                    <Icon name={r.icon} size={18} />
                   </span>
-                </span>
-                <span className="setting__value">
-                  {r.value}
-                  <Icon name="chevronRight" size={12} />
-                </span>
-              </button>
+                  <span className="setting__main">
+                    <span className="setting__title">{r.title}</span>
+                    <span className="setting__sub" style={{ display: 'block' }}>
+                      {r.sub}
+                    </span>
+                  </span>
+                  <span className="setting__value">
+                    {r.value}
+                    <Icon name="chevronRight" size={12} />
+                  </span>
+                </button>
+              </Fragment>
             ))}
           </div>
         </section>
