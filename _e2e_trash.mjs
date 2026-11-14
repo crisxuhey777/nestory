@@ -176,7 +176,12 @@ try {
   await waitFor(`location.hash.startsWith('#/trash')`)
   check('从我的进入最近删除', (await evaluate(`location.hash`)).includes('from=profile'))
   await waitFor('!!document.querySelector(".trash-card")')
-  check('可回到我的', (await evaluate(`document.body.innerText.includes('回到我的')`)) === true)
+  const backLink = await evaluate(`document.querySelector('.trash-back')?.innerText.trim()`)
+  check('底部右侧有返回「我的」的文字入口', backLink === '我的', backLink)
+  const backRect = await evaluate(
+    `(() => { const el = document.querySelector('.trash-back'); const r = el.getBoundingClientRect(); return { right: window.innerWidth - r.right, bottom: window.innerHeight - r.top } })()`,
+  )
+  check('返回入口靠右对齐', backRect.right < 40, JSON.stringify(backRect))
   const card = await evaluate(`document.querySelector('.trash-card')?.innerText.replace(/\\s+/g, ' ').trim()`)
   check('最近删除页列出刚删的照片', card.includes(firstCaption) && card.includes('还剩 7 天'), card)
 
@@ -199,6 +204,10 @@ try {
     await sleep(250)
   }
   check('照片回到相册', (afterRestore?.photos || []).some((p) => p.caption === firstCaption), `${(afterRestore?.photos || []).length}`)
+
+  await evaluate(`document.querySelector('.trash-back').click()`)
+  await waitFor(`location.hash.startsWith('#/profile')`)
+  check('点底部「我的」回到我的页面', (await evaluate(`location.hash`)).startsWith('#/profile'))
 
   await goto(BASE + '/?e2e=trash2#/album')
   check('相册恢复原数量', (await evaluate(`document.querySelectorAll('.album-card').length`)) === Math.min(beforeCount, 4))
