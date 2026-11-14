@@ -749,20 +749,9 @@ export default function AlbumPage() {
             : `${visible.length} 个瞬间 · ${scope ?? ''}`
         }
         right={
-          <>
-            {canDelete && photos.length ? (
-              <button
-                type="button"
-                className="album-select-toggle"
-                onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-              >
-                {selectMode ? '完成' : '选择'}
-              </button>
-            ) : null}
-            <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={19} />
-            </button>
-          </>
+          <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
+            <Icon name="plus" size={19} />
+          </button>
         }
       />
 
@@ -791,19 +780,26 @@ export default function AlbumPage() {
 
         <AlbumAiCard />
 
-        <div className="chip-row" style={{ marginTop: 16 }}>
-          <button className={`chip${filter === 'all' ? ' chip--on' : ''}`} onClick={() => setFilter('all')}>
-            全部 · {photos.length}
-          </button>
-          {months.map((m) => (
-            <button
-              key={m.key}
-              className={`chip${filter === m.key ? ' chip--on' : ''}`}
-              onClick={() => setFilter(m.key)}
-            >
-              {m.label}
+        <div className="album-filters">
+          <div className="chip-row album-filters__chips">
+            <button className={`chip${filter === 'all' ? ' chip--on' : ''}`} onClick={() => setFilter('all')}>
+              全部 · {photos.length}
             </button>
-          ))}
+            {months.map((m) => (
+              <button
+                key={m.key}
+                className={`chip${filter === m.key ? ' chip--on' : ''}`}
+                onClick={() => setFilter(m.key)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          {canDelete && photos.length && !selectMode ? (
+            <button type="button" className="album-select-toggle" onClick={() => setSelectMode(true)}>
+              选择
+            </button>
+          ) : null}
         </div>
 
         {groups.length === 0 ? (

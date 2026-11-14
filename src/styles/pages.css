@@ -4475,12 +4475,30 @@
 }
 
 /* ---------- album delete + trash ---------- */
+.album-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.album-filters__chips {
+  flex: 1;
+  min-width: 0;
+}
+
 .album-select-toggle {
-  padding: 7px 10px;
-  border-radius: 999px;
-  font-size: calc(12px * var(--type-scale, 1));
-  color: var(--ink-2);
-  background: var(--ivory-deep);
+  flex: none;
+  padding: 4px 2px;
+  font-size: calc(12.5px * var(--type-scale, 1));
+  color: var(--ink-3);
+  background: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.album-select-toggle:hover {
+  color: var(--ink);
 }
 
 .album-card--selectable img {
