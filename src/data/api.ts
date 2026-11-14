@@ -11,7 +11,7 @@ export type User = {
   avatarUrl?: string | null
 }
 
-export type Session = { user: User; state: AppState }
+export type Session = { user: User; state: AppState; rev: number }
 
 export type Permission = 'admin' | 'edit' | 'read'
 
@@ -217,9 +217,9 @@ export async function aiPost<T>(path: string, body: unknown, timeoutMs = 90_000)
   return request<T>(path, { method: 'POST', body: JSON.stringify(body), timeoutMs })
 }
 
-function session(payload: { user: User; state: unknown }): Session {
+function session(payload: { user: User; state: unknown; rev?: number }): Session {
   if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '数据加载失败，请刷新后再试')
-  return { user: payload.user, state: payload.state }
+  return { user: payload.user, state: payload.state, rev: typeof payload.rev === 'number' ? payload.rev : 0 }
 }
 
 export const api = {
@@ -245,18 +245,21 @@ export const api = {
     await request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
   },
 
-  saveState: async (state: AppState, keepalive = false): Promise<void> => {
-    await request<{ ok: boolean }>('/api/state', {
+  /** 保存整份状态；带上版本号就走乐观锁，返回写入后的新版本号。 */
+  saveState: async (state: AppState, keepalive = false, rev?: number | null): Promise<number> => {
+    const payload = await request<{ ok: boolean; rev?: number }>('/api/state', {
       method: 'PUT',
       body: JSON.stringify({ state }),
       keepalive,
+      headers: typeof rev === 'number' ? { 'If-Match': String(rev) } : undefined,
     })
+    return typeof payload.rev === 'number' ? payload.rev : 0
   },
 
-  resetState: async (): Promise<AppState> => {
-    const payload = await request<{ state: unknown }>('/api/state/reset', { method: 'POST' })
+  resetState: async (): Promise<{ state: AppState; rev: number }> => {
+    const payload = await request<{ state: unknown; rev?: number }>('/api/state/reset', { method: 'POST' })
     if (!isAppState(payload.state)) throw new ApiError(500, 'bad_state', '数据加载失败，请刷新后再试')
-    return payload.state
+    return { state: payload.state, rev: typeof payload.rev === 'number' ? payload.rev : 0 }
   },
 
   family: (): Promise<FamilyPayload> => request<FamilyPayload>('/api/family'),

@@ -330,6 +330,10 @@ function ReadyStore({
   const retryRef = useRef<() => void>(() => undefined)
   /** reload() 带回来的状态不需要再回写一遍（只读成员回写还会 403） */
   const skipNextSave = useRef(false)
+  /** 服务端那份 state 的版本号：保存时带 If-Match，别人先写过就 409。 */
+  const revRef = useRef(session.rev)
+  /** reload 在 queueSave 之后定义，冲突时通过 ref 回调，避免依赖顺序。 */
+  const reloadRef = useRef<() => Promise<void>>(async () => undefined)
 
   const clearRetry = useCallback(() => {
     if (retryTimer.current === null) return
@@ -385,8 +389,9 @@ function ReadyStore({
     (snapshot: AppState, keepalive = false) => {
       saveChain.current = saveChain.current
         .catch(() => undefined)
-        .then(() => api.saveState(snapshot, keepalive))
-        .then(() => {
+        .then(() => api.saveState(snapshot, keepalive, revRef.current))
+        .then((rev) => {
+          revRef.current = rev
           clearRetry()
           retryAttempt.current = 0
           clearSaveError()
@@ -396,6 +401,15 @@ function ReadyStore({
           recordSaveError(error instanceof Error ? error.message : '保存失败')
           if (error instanceof ApiError && error.status === 401) {
             signOut()
+            return
+          }
+          // 别人先写过这份状态：不要拿旧快照盖回去，载入最新内容让用户重做这一笔。
+          if (error instanceof ApiError && error.status === 409 && error.code === 'state_conflict') {
+            clearRetry()
+            clearSaveError()
+            dirty.current = false
+            toast('记录已在另一台设备上更新，正在载入最新内容')
+            void reloadRef.current()
             return
           }
           const now = Date.now()
@@ -497,7 +511,11 @@ function ReadyStore({
       if (action.type === 'reset') {
         void api
           .resetState()
-          .then((next) => apply({ type: 'hydrate', state: next }))
+          .then(({ state: fresh, rev }) => {
+            revRef.current = rev
+            skipNextSave.current = true
+            apply({ type: 'hydrate', state: fresh })
+          })
           .catch((error) => toast(error instanceof Error ? error.message : '重置失败'))
         return
       }
@@ -514,9 +532,10 @@ function ReadyStore({
 
   const reload = useCallback(async () => {
     try {
-      const session = await api.me()
+      const fresh = await api.me()
       skipNextSave.current = true
-      apply({ type: 'hydrate', state: session.state })
+      revRef.current = fresh.rev
+      apply({ type: 'hydrate', state: fresh.state })
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         signOut()
@@ -525,6 +544,7 @@ function ReadyStore({
       toast(error instanceof Error ? error.message : '刷新失败')
     }
   }, [signOut, toast])
+  reloadRef.current = reload
 
   /** 退出登录前先把未保存的改动发出去，否则最后一次修改会随组件卸载消失。 */
   const leave = useCallback(() => {

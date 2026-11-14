@@ -121,7 +121,7 @@ def _backfill(conn, household_id: int, user_id: int) -> None:
 def state_row(conn, household_id: int) -> dict | None:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT state_json FROM household_state WHERE household_id = %s",
+            "SELECT state_json, rev FROM household_state WHERE household_id = %s",
             (household_id,),
         )
         return cur.fetchone()
@@ -151,16 +151,44 @@ def backup_state(conn, household_id: int, user_id: int | None, reason: str, stat
         )
 
 
-def save_state(conn, household_id: int, state: dict) -> None:
+def save_state(conn, household_id: int, state: dict, expected_rev: int | None = None) -> int:
+    """写家庭共享状态，返回新的版本号。
+
+    ``expected_rev`` 为 None 时按旧语义整份覆盖（重置、加入家庭合并等内部写入）；
+    带上版本号时走乐观锁：版本对不上就抛 409，宁可让用户重载，也不静默吞掉别人的记录。
+    """
     payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO household_state (household_id, state_json) VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE state_json = VALUES(state_json)
-            """,
-            (household_id, payload),
-        )
+        if expected_rev is None:
+            cur.execute(
+                """
+                INSERT INTO household_state (household_id, state_json, rev) VALUES (%s, %s, 1)
+                ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), rev = rev + 1
+                """,
+                (household_id, payload),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE household_state SET state_json = %s, rev = rev + 1
+                WHERE household_id = %s AND rev = %s
+                """,
+                (payload, household_id, expected_rev),
+            )
+            if cur.rowcount == 0:
+                cur.execute("SELECT rev FROM household_state WHERE household_id = %s", (household_id,))
+                row = cur.fetchone()
+                if not row:
+                    # 家庭状态行还不存在（例如刚建家庭）：当成首次写入。
+                    cur.execute(
+                        "INSERT INTO household_state (household_id, state_json, rev) VALUES (%s, %s, 1)",
+                        (household_id, payload),
+                    )
+                else:
+                    raise _err(409, "state_conflict", "记录在别的设备上刚更新过，请重新载入后再改")
+        cur.execute("SELECT rev FROM household_state WHERE household_id = %s", (household_id,))
+        row = cur.fetchone()
+        return int((row or {}).get("rev") or 0)
 
 
 def members(conn, household_id: int) -> list[dict]:

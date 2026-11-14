@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-const BASE = 'http://localhost:5178'
+const BASE = process.argv[2] || 'http://localhost:5178'
 const port = 9950 + Math.floor(Math.random() * 40)
 const profile = mkdtempSync(join(tmpdir(), 'nestory-save-'))
 const chrome = spawn(
@@ -145,6 +145,26 @@ try {
   check('恢复网络后自动补发', recovered)
   const clearedMark = await evaluate(`localStorage.getItem('nestory.unsaved') || ''`)
   check('补发成功后清掉失败标记', clearedMark === '', clearedMark)
+
+  // 版本冲突：模拟另一台设备先保存了一次，再在页面上改 → 提示并载入最新内容
+  await evaluate(
+    `(async () => {
+      const d = await fetch('/api/state').then(r => r.json())
+      await fetch('/api/state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: d.state }),
+      })
+    })()`,
+    true,
+  )
+  await evaluate(`[...document.querySelectorAll('.interval-picker button')].find(b => b.textContent.startsWith('2'))?.click()`)
+  await sleep(1800)
+  const conflictToasts = await evaluate(`[...document.querySelectorAll('.toast')].map(t => t.textContent).join('|')`)
+  check('别人先写过时提示冲突', conflictToasts.includes('另一台设备'), conflictToasts)
+  await sleep(1200)
+  const settledValue = await evaluate(`document.querySelector('.interval-picker button.on')?.textContent || ''`)
+  check('冲突后载入服务端最新值', settledValue.startsWith('4'), settledValue)
 
   // 还原成 3 小时，别把演示数据改坏
   await evaluate(`[...document.querySelectorAll('.interval-picker button')].find(b => b.textContent.startsWith('3'))?.click()`)

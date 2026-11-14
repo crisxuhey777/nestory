@@ -317,14 +317,27 @@ class Handler(BaseHTTPRequestHandler):
     def _token(self) -> str | None:
         return auth.parse_cookie(self.headers.get("Cookie"))
 
-    def _authed(self) -> tuple[dict, dict] | None:
+    def _if_match(self) -> int | None:
+        """读 If-Match 里的版本号；没带就是旧客户端，按整份覆盖处理。"""
+        raw = (self.headers.get("If-Match") or "").strip().strip('"')
+        if not raw or raw == "*":
+            return None
         try:
-            user, state = accounts.me(self._token())
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("If-Match must be a version number") from None
+        if value < 0:
+            raise ValueError("If-Match must be >= 0")
+        return value
+
+    def _authed(self) -> tuple[dict, dict, int] | None:
+        try:
+            user, state, rev = accounts.me(self._token())
         except accounts.ApiError as exc:
             self._fail(exc)
             return None
         self._set_user(user)
-        return user, state
+        return user, state, rev
 
     # ------------------------------------------------------------ 路由
 
@@ -429,19 +442,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get_me(self) -> None:
         try:
-            user, state = accounts.me(self._token())
+            user, state, rev = accounts.me(self._token())
         except accounts.ApiError as exc:
             self._fail(exc)
             return
         self._set_user(user)
-        self._ok({"user": user, "state": state})
+        self._ok({"user": user, "state": state, "rev": rev})
 
     def _get_state(self) -> None:
         got = self._authed()
         if got is None:
             return
-        user, state = got
-        self._ok({"source": "mysql", "state": state, "user": user})
+        user, state, rev = got
+        self._ok({"source": "mysql", "state": state, "user": user, "rev": rev})
 
     def _get_family(self) -> None:
         user = self._media_user()
@@ -820,7 +833,12 @@ class Handler(BaseHTTPRequestHandler):
             self._error(400, "bad_request", str(exc))
             return
         try:
-            result = accounts.save_state(self._token(), state)
+            expected_rev = self._if_match()
+        except ValueError:
+            self._error(400, "bad_if_match", "If-Match 必须是版本号")
+            return
+        try:
+            result = accounts.save_state(self._token(), state, expected_rev)
         except accounts.ApiError as exc:
             self._fail(exc)
             return
@@ -832,7 +850,7 @@ class Handler(BaseHTTPRequestHandler):
     def _register(self) -> None:
         try:
             data = self._read_json()
-            user, state, token = accounts.register(data)
+            user, state, rev, token = accounts.register(data)
         except ValueError as exc:
             self._error(400, "bad_request", str(exc))
             return
@@ -841,7 +859,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._set_user(user)
         self._ok(
-            {"source": "mysql", "user": user, "state": state},
+            {"source": "mysql", "user": user, "state": state, "rev": rev},
             headers={"Set-Cookie": auth.cookie_header(token)},
         )
 
@@ -858,7 +876,7 @@ class Handler(BaseHTTPRequestHandler):
             self._error(429, "too_many_attempts", f"尝试次数过多，请 {wait} 秒后再试")
             return
         try:
-            user, state, token = accounts.login(data)
+            user, state, rev, token = accounts.login(data)
         except accounts.ApiError as exc:
             _login_failed(key)
             self._fail(exc)
@@ -866,7 +884,7 @@ class Handler(BaseHTTPRequestHandler):
         _login_ok(key)
         self._set_user(user)
         self._ok(
-            {"source": "mysql", "user": user, "state": state},
+            {"source": "mysql", "user": user, "state": state, "rev": rev},
             headers={"Set-Cookie": auth.cookie_header(token)},
         )
 

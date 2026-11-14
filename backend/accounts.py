@@ -270,19 +270,28 @@ def _create_session(conn, user_id: int) -> str:
     return token
 
 
-def _save_state(conn, user: dict, state: dict, baby_name: str, birthday: date | None) -> None:
+def _save_state(
+    conn,
+    user: dict,
+    state: dict,
+    baby_name: str,
+    birthday: date | None,
+    expected_rev: int | None = None,
+) -> int:
     """写家庭共享状态，并把宝宝档案同步到个人账号上。
 
     ``state.family`` 由数据库推导，不落库；否则家庭成员一变动就会有两份不一致的副本。
+    返回写入后的版本号（乐观锁用）。
     """
     family.strip(state)
     household = family.ensure(conn, user)
-    family.save_state(conn, household["id"], state)
+    rev = family.save_state(conn, household["id"], state, expected_rev)
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE users SET baby_name = %s, baby_birthday = %s WHERE id = %s",
             (baby_name, birthday, user["id"]),
         )
+    return rev
 
 
 def _normalize_demo_photos(state: dict) -> bool:
@@ -318,9 +327,10 @@ def _normalize_demo_photos(state: dict) -> bool:
     return True
 
 
-def _load_state(conn, row: dict) -> dict:
+def _load_state(conn, row: dict) -> tuple[dict, int]:
     household = family.ensure(conn, row)
     saved = family.state_row(conn, household["id"])
+    rev = int((saved or {}).get("rev") or 0)
     if saved:
         state = None
         try:
@@ -336,12 +346,13 @@ def _load_state(conn, row: dict) -> dict:
                 # 早期版本把生日存成了毫秒，读出来时顺手修正并落库
                 try:
                     baby["birthday"] = _ms_to_date(int(raw)).isoformat()
-                    _save_state(
+                    rev = _save_state(
                         conn,
                         row,
                         state,
                         (state.get("baby") or {}).get("name") or row.get("baby_name") or "",
                         _day_from_state(state.get("baby") or {}) or row.get("baby_birthday"),
+                        rev,
                     )
                     log.info("migrated baby.birthday user=%s %s -> %s", row["id"], raw, baby["birthday"])
                 except (ApiError, ValueError, OSError) as exc:
@@ -358,15 +369,16 @@ def _load_state(conn, row: dict) -> dict:
             normalized = _normalize_demo_photos(state)
             archived = _archive_prebirth(state)
             if normalized or archived:
-                _save_state(
+                rev = _save_state(
                     conn,
                     row,
                     state,
                     (state.get("baby") or {}).get("name") or row.get("baby_name") or "",
                     _day_from_state(state.get("baby") or {}) or row.get("baby_birthday"),
+                    rev,
                 )
                 log.info("normalized demo photo / pre-birth records user=%s", row["id"])
-            return family.attach(conn, row, state)
+            return family.attach(conn, row, state), rev
 
     # 老账号或数据损坏：建一份空状态，不再注入演示数据
     birthday = row.get("baby_birthday")
@@ -374,8 +386,8 @@ def _load_state(conn, row: dict) -> dict:
         row.get("baby_name") or "",
         birthday.isoformat() if birthday else "",
     )
-    _save_state(conn, row, state, row.get("baby_name") or "", birthday)
-    return family.attach(conn, row, state)
+    rev = _save_state(conn, row, state, row.get("baby_name") or "", birthday, None)
+    return family.attach(conn, row, state), rev
 
 
 def _user_row_by_email(conn, email: str) -> dict | None:
@@ -398,7 +410,7 @@ def _user_row_by_token(conn, token: str) -> dict | None:
         return cur.fetchone()
 
 
-def register(data: dict) -> tuple[dict, dict, str]:
+def register(data: dict) -> tuple[dict, dict, int, str]:
     email = _s(data.get("email")).lower()
     password = data.get("password") or ""
     nickname = _s(data.get("nickname")) or email.split("@")[0]
@@ -431,7 +443,7 @@ def register(data: dict) -> tuple[dict, dict, str]:
                 cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 row = cur.fetchone()
             # 建档同时建家庭：注册完就是自己家的 admin
-            _save_state(conn, row, state, "", None)
+            rev = _save_state(conn, row, state, "", None)
             state = family.attach(conn, row, state)
             token = _create_session(conn, user_id)
     except pymysql.err.IntegrityError as exc:
@@ -440,11 +452,11 @@ def register(data: dict) -> tuple[dict, dict, str]:
             raise ApiError(409, "email_exists", "email already registered") from exc
         raise
     log.info("register user=%s email=%s", user_id, _mask_email(email))
-    return _public_user(row), state, token
+    return _public_user(row), state, rev, token
 
 
 
-def login(data: dict) -> tuple[dict, dict, str]:
+def login(data: dict) -> tuple[dict, dict, int, str]:
     email = _s(data.get("email")).lower()
     password = data.get("password") or ""
     if not email or not password:
@@ -461,9 +473,9 @@ def login(data: dict) -> tuple[dict, dict, str]:
             log.warning("login failed email=%s", _mask_email(email))
             raise ApiError(401, "bad_credentials", "邮箱或密码不正确")
         token = _create_session(conn, row["id"])
-        state = _load_state(conn, row)
+        state, rev = _load_state(conn, row)
     log.info("login user=%s email=%s", row["id"], _mask_email(email))
-    return _public_user(row), state, token
+    return _public_user(row), state, rev, token
 
 
 def user_from_token(token: str | None) -> dict:
@@ -477,15 +489,15 @@ def user_from_token(token: str | None) -> dict:
     return _public_user(row)
 
 
-def me(token: str | None) -> tuple[dict, dict]:
+def me(token: str | None) -> tuple[dict, dict, int]:
     if not token:
         raise ApiError(401, "unauthorized", "请先登录")
     with _conn() as conn:
         row = _user_row_by_token(conn, token)
         if not row:
             raise ApiError(401, "unauthorized", "登录已过期，请重新登录")
-        state = _load_state(conn, row)
-    return _public_user(row), state
+        state, rev = _load_state(conn, row)
+    return _public_user(row), state, rev
 
 
 def logout(token: str | None) -> None:
@@ -497,7 +509,7 @@ def logout(token: str | None) -> None:
     log.info("logout")
 
 
-def save_state(token: str | None, state: dict) -> dict:
+def save_state(token: str | None, state: dict, expected_rev: int | None = None) -> dict:
     if not token:
         raise ApiError(401, "unauthorized", "请先登录")
     baby = state.get("baby") or {}
@@ -519,18 +531,19 @@ def save_state(token: str | None, state: dict) -> dict:
         baby["name"] = baby_name
         baby["birthday"] = birthday.isoformat() if birthday else ""
         _archive_prebirth(state)
-        _save_state(conn, row, state, baby_name, birthday)
+        rev = _save_state(conn, row, state, baby_name, birthday, expected_rev)
         state = family.attach(conn, row, state)
     size = len(json.dumps(state, ensure_ascii=False, separators=(",", ":")))
     log.info(
-        "state saved user=%s bytes=%d feeds=%d sleeps=%d photos=%d",
+        "state saved user=%s rev=%s bytes=%d feeds=%d sleeps=%d photos=%d",
         row["id"],
+        rev,
         size,
         len(state.get("feeds") or []),
         len(state.get("sleeps") or []),
         len(state.get("photos") or []),
     )
-    return {"ok": True, "savedAt": int(time.time() * 1000), "userId": row["id"]}
+    return {"ok": True, "savedAt": int(time.time() * 1000), "userId": row["id"], "rev": rev}
 
 
 def reset_state(token: str | None) -> dict:
@@ -560,7 +573,7 @@ def reset_state(token: str | None) -> dict:
                 row.get("baby_name") or "",
                 birthday.isoformat() if birthday else "",
             )
-        _save_state(conn, row, state, row.get("baby_name") or "", birthday)
+        rev = _save_state(conn, row, state, row.get("baby_name") or "", birthday)
         state = family.attach(conn, row, state)
-    log.info("state reset user=%s", row["id"])
-    return {"ok": True, "state": state}
+    log.info("state reset user=%s rev=%s", row["id"], rev)
+    return {"ok": True, "state": state, "rev": rev}

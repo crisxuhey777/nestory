@@ -135,6 +135,7 @@ SCHEMA = [
     CREATE TABLE IF NOT EXISTS household_state (
       household_id BIGINT UNSIGNED NOT NULL,
       state_json MEDIUMTEXT NOT NULL,
+      rev BIGINT UNSIGNED NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (household_id),
       CONSTRAINT fk_hstate_household FOREIGN KEY (household_id) REFERENCES households (id) ON DELETE CASCADE
@@ -172,6 +173,11 @@ MIGRATIONS = [
         "media",
         "idx_media_household",
         "ALTER TABLE media ADD KEY idx_media_household (household_id, created_at)",
+    ),
+    (
+        "household_state",
+        "rev",
+        "ALTER TABLE household_state ADD COLUMN rev BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER state_json",
     ),
 ]
 
