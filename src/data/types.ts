@@ -40,6 +40,8 @@ export type Milestone = {
   title: string
   note?: string
   kind: 'milestone' | 'anniversary'
+  /** 纪念日记录写下时的生日（yyyy-mm-dd）。生日改了，这条记录就不该再算数。 */
+  birthday?: string
 }
 
 export type Baby = {

@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import time
+from calendar import monthrange
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
@@ -106,11 +107,57 @@ def _record_time(kind: str, record: dict):
     return record.get(key)
 
 
+ANNIVERSARY_MONTHS = {
+    "满月纪念": 1,
+    "三个月": 3,
+    "半岁纪念": 6,
+    "周岁纪念": 12,
+    "两岁生日": 24,
+    "三岁生日": 36,
+}
+
+
+def _add_months(day: date, months: int) -> date:
+    total = day.year * 12 + (day.month - 1) + months
+    year, month = divmod(total, 12)
+    month += 1
+    return date(year, month, min(day.day, monthrange(year, month)[1]))
+
+
+def _anniversary_day(birth: date, label: str) -> date | None:
+    if label == "百天纪念":
+        return birth + timedelta(days=100)
+    months = ANNIVERSARY_MONTHS.get(label)
+    return _add_months(birth, months) if months else None
+
+
+def _stale_anniversary(record: dict, birth) -> bool:
+    """A recorded anniversary belongs to the birthday it was written under."""
+    if birth is None or record.get("kind") != "anniversary":
+        return False
+    written = record.get("birthday")
+    if isinstance(written, str) and written:
+        return written != birth.isoformat()
+    # 老记录没存生日：用标题反查当前生日的那一天，对不上就属于别的生日。
+    at = record.get("at")
+    if not isinstance(at, (int, float)):
+        return False
+    expected = _anniversary_day(birth, record.get("title") or "")
+    if expected is None:
+        return False
+    try:
+        return _ms_to_date(int(at)) != expected
+    except (OverflowError, OSError, ValueError):
+        return False
+
+
 def _archive_prebirth(state: dict) -> bool:
     """Move records before the current birthday into state['archived'].
 
     This runs on load and save. Records are never deleted; changing the birthday
-    back to an earlier date moves them back into the visible arrays.
+    back to an earlier date moves them back into the visible arrays. Anniversary
+    milestones also follow the birthday they were recorded under, so changing the
+    birthday hides them until it is changed back.
     """
     keys = ("feeds", "sleeps", "diapers", "growths", "milestones", "photos")
     archived = state.get("archived")
@@ -138,6 +185,9 @@ def _archive_prebirth(state: dict) -> bool:
         keep = []
         hide = []
         for item in merged:
+            if kind == "milestones" and _stale_anniversary(item, birth):
+                hide.append(item)
+                continue
             at = _record_time(kind, item)
             if birth is not None and isinstance(at, (int, float)):
                 try:

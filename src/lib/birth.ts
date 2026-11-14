@@ -9,7 +9,7 @@ import type {
   Photo,
   SleepRecord,
 } from '../data/types'
-import { startOfDay } from './date'
+import { anniversaryCandidates, startOfDay } from './date'
 
 /** 这份 App 里的“出生下界”统一按自然日计算：生日当天全天都算出生后。 */
 export function birthdayStart(baby: Baby | null | undefined): number | null {
@@ -50,9 +50,22 @@ function mergeArchive<T extends { id: string }>(main: T[], archived: T[]): T[] {
   return out
 }
 
+function isStaleAnniversary(item: Milestone, baby: Baby | null | undefined): boolean {
+  if (item.kind !== 'anniversary') return false
+  const current = baby?.birthday
+  if (!current) return false
+  if (item.birthday) return item.birthday !== current
+  // 老记录没有 birthday 字段：用「标题 + 记录日期」反查当前生日，对不上就说明它属于别的生日。
+  const day = startOfDay(item.at)
+  return !anniversaryCandidates(current).some(
+    (entry) => entry.label === item.title && startOfDay(entry.date.getTime()) === day,
+  )
+}
+
 /**
  * 把早于生日的记录从主数组移到 `archived`。
  * 每次生日变更都从「主数组 + archived」重新切分，所以生日改早时旧记录会自动恢复。
+ * 纪念日记录还额外按「写下时的生日」判定：生日换了，属于旧生日的那条也一起收起来，改回去再恢复。
  */
 export function normalizeBirthState(state: AppState): AppState {
   const archived = state.archived ?? emptyArchive()
@@ -65,7 +78,8 @@ export function normalizeBirthState(state: AppState): AppState {
     const keep: BirthRecord[] = []
     const hide: BirthRecord[] = []
     for (const item of mergeArchive(main, old)) {
-      if (isBeforeBirth(timeOf(kind, item), state.baby)) hide.push(item)
+      const stale = kind === 'milestones' && isStaleAnniversary(item as Milestone, state.baby)
+      if (stale || isBeforeBirth(timeOf(kind, item), state.baby)) hide.push(item)
       else keep.push(item)
     }
     ;(next[kind] as BirthRecord[]) = keep

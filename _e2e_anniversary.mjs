@@ -155,6 +155,33 @@ try {
     created?.note === '满月这天，第一次笑出声。' && created?.kind === 'anniversary',
     JSON.stringify(created),
   )
+  check('纪念日记录带上写下时的生日', created?.birthday === iso, `${created?.birthday} vs ${iso}`)
+
+  const readState = () => evaluate(`(async () => (await (await fetch('/api/state')).json()).state)()`)
+  const putState = (state) =>
+    evaluate(
+      `fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: ${JSON.stringify(state)} }) }).then(r => r.status)`,
+    )
+
+  // 把生日改回真实值：属于假生日的纪念日应被收起（而不是删掉）。
+  const current = await readState()
+  await putState({ ...current, baby: { ...current.baby, birthday: before.baby.birthday } })
+  await reload()
+  const afterReal = await readState()
+  const stillVisible = (afterReal.milestones || []).some((m) => m.title === '满月纪念')
+  const keptAside = (afterReal.archived?.milestones || []).some((m) => m.title === '满月纪念')
+  check('改回出生日期后记录从时间轴收起', !stillVisible && keptAside, JSON.stringify({ stillVisible, keptAside }))
+
+  // 再改回假生日：收起的那条应回来。
+  const back = await readState()
+  await putState({ ...back, baby: { ...back.baby, birthday: iso } })
+  await reload()
+  const afterBack = await readState()
+  check(
+    '生日改回去后记录重新出现',
+    (afterBack.milestones || []).some((m) => m.title === '满月纪念') &&
+      !(afterBack.archived?.milestones || []).some((m) => m.title === '满月纪念'),
+  )
 } finally {
   await evaluate(
     `fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: ${JSON.stringify(before)} }) }).then(r => r.status)`,

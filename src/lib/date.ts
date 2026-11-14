@@ -132,23 +132,28 @@ export function fromISODate(s: string, hh = 0, mm = 0): number {
   return new Date(y, m - 1, d, hh, mm, 0, 0).getTime()
 }
 
+/** 由生日推出的全部纪念日（含已过去的），时间轴与倒计时共用同一套标签。 */
+export function anniversaryCandidates(birthday: string): { date: Date; label: string }[] {
+  const b = new Date(fromISODate(birthday))
+  return [
+    { date: addMonths(b, 1), label: '满月纪念' },
+    { date: new Date(b.getTime() + 100 * DAY), label: '百天纪念' },
+    { date: addMonths(b, 3), label: '三个月' },
+    { date: addMonths(b, 6), label: '半岁纪念' },
+    { date: addMonths(b, 12), label: '周岁纪念' },
+    { date: addMonths(b, 24), label: '两岁生日' },
+    { date: addMonths(b, 36), label: '三岁生日' },
+  ]
+}
+
 /** 距下一个纪念日的天数；at 是该纪念日当天 0 点的毫秒时间戳 */
 export function daysUntilAnniversary(birthday: string, now = new Date()): { days: number; label: string; at: number } | null {
-  const b = new Date(fromISODate(birthday))
-  const candidates: { date: Date; label: string }[] = []
-  const push = (date: Date, label: string) => {
-    if (date.getTime() >= startOfDay(now)) candidates.push({ date, label })
-  }
-  push(addMonths(b, 1), '满月纪念')
-  push(new Date(b.getTime() + 100 * DAY), '百天纪念')
-  push(addMonths(b, 3), '三个月')
-  push(addMonths(b, 6), '半岁纪念')
-  push(addMonths(b, 12), '周岁纪念')
-  push(addMonths(b, 24), '两岁生日')
-  push(addMonths(b, 36), '三岁生日')
-  candidates.sort((x, y) => x.date.getTime() - y.date.getTime())
+  const today = startOfDay(now)
+  const candidates = anniversaryCandidates(birthday)
+    .filter((entry) => entry.date.getTime() >= today)
+    .sort((x, y) => x.date.getTime() - y.date.getTime())
   const next = candidates[0]
   if (!next) return null
-  const days = Math.round((startOfDay(next.date) - startOfDay(now)) / DAY)
+  const days = Math.round((startOfDay(next.date) - today) / DAY)
   return { days, label: next.label, at: next.date.getTime() }
 }

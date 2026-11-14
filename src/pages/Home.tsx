@@ -351,7 +351,14 @@ export default function HomePage() {
       }
       dispatch({
         type: 'addMilestone',
-        milestone: { id: uid('ms'), at, title: next.label, note: note || undefined, kind: 'anniversary' },
+        milestone: {
+          id: uid('ms'),
+          at,
+          title: next.label,
+          note: note || undefined,
+          kind: 'anniversary',
+          birthday: state.baby.birthday || undefined,
+        },
       })
       toast(`已记下${next.label}`)
       closeAnniversary()
