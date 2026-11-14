@@ -45,6 +45,20 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # 一次性修媒体目录权限。
+  # 容器里以 uid 10001 运行，而 ./data/media 是 Docker 用 root 建的：
+  # 不修的话第一次上传照片就是 500（PermissionError: '/data/media/nestory'）。
+  init:
+    image: busybox:1.36
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data/media && chown -R 10001:10001 /data/media"]
+    restart: "no"
+    volumes:
+      - ./data/media:/data/media
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "1" }
+
   app:
     build:
       context: ../..
@@ -54,6 +68,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      init:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:

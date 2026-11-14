@@ -206,6 +206,8 @@ docker compose ps
 
 `app` 和 `db` 要是 `healthy`，`caddy` 是 `running`。
 
+还会看到一个 `nestory-init-1` 处于 `Exited (0)`，这是正常的：它只负责把 `data/media` 的属主改成容器用户（uid 10001），跑完就退出。没有它，第一次上传照片会因为目录是 root 所有而报 500。
+
 ### 第一次健康检查
 
 ```bash
@@ -375,6 +377,8 @@ docker compose logs --tail=50  db
 | 502 Bad Gateway | `app` 没起来或 crash | `docker compose logs app`，多半是数据库连不上 |
 | 证书签不下来 | 80 端口不通 / DNS 不对 / 开了 Cloudflare 代理 | 先把 CF 云朵点灰，确认 `curl http://域名` 能访问，再 `docker compose restart caddy` |
 | 登录后立刻退出 | 用 `http://` 访问，而 `NESTORY_COOKIE_SECURE=1` | 必须走 `https://` |
+| 上传照片直接 **500**，日志有 `PermissionError: [Errno 13] '/data/media/nestory'` | `data/media` 是 Docker 用 root 建的，容器里以 uid 10001 跑，写不进去 | `sudo chown -R 10001:10001 data/media && docker compose restart app`（compose 里的 `init` 服务会在每次启动时自动修） |
+| 家人登录后看不到宝宝资料/照片 | 他注册时自动建了自己的「单人家庭」，邀请链接只打开了、没点「加入家庭」 | 重新发邀请 → 家人登录后点页面上的「加入家庭」；用 `households` 表核对两人是否同一个 `household_id` |
 | 上传大视频失败（413） | 反向代理请求体上限 | `Caddyfile` 的 `max_size 300MB` 要大于 `NESTORY_MEDIA_MAX_MB` |
 | 上传后照片 404 | 媒体目录没挂对 | `docker compose exec app ls /data/media` 应该有文件 |
 | 容器反复重启，`dmesg` 有 oom | 内存不足 | 加 swap；或把 compose 里 `--innodb-buffer-pool-size=128M` 降到 `96M` |
