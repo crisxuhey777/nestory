@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { Dispatch, ReactNode } from 'react'
-import type { AppState, Baby, DiaperRecord, FamilyMember, FeedRecord, GrowthRecord, Milestone, Photo, Reminder, SleepRecord } from './types'
+import type { AppState, Baby, DiaperRecord, FamilyMember, FeedRecord, GrowthRecord, Milestone, Photo, Reminder, SleepRecord, TrashItem } from './types'
 import type { RegisterInput, Session, User } from './api'
 import { ApiError, api, isAppState } from './api'
 import AuthScreen from '../components/AuthScreen'
@@ -20,6 +20,9 @@ type Action =
   | { type: 'addDiaper'; diaper: DiaperRecord }
   | { type: 'addGrowth'; growth: GrowthRecord }
   | { type: 'addPhoto'; photo: Photo }
+  | { type: 'trashPhotos'; photos: Photo[]; deletedAt: number }
+  | { type: 'restorePhotos'; ids: string[] }
+  | { type: 'dropTrash'; ids: string[] }
   | { type: 'addMilestone'; milestone: Milestone }
   | { type: 'updatePhoto'; id: string; patch: Partial<Photo> }
   | { type: 'setPhotoVisuals'; visuals: { id: string; visualCaption: string; visualAt: number }[] }
@@ -46,6 +49,25 @@ const HAPTIC_ACTIONS: ReadonlySet<Action['type']> = new Set<Action['type']>([
   'addMilestone',
 ])
 
+/** 回收站条目转回普通照片（去掉 deletedAt）。 */
+function toPhoto(item: TrashItem): Photo {
+  return {
+    id: item.id,
+    src: item.src,
+    thumb: item.thumb,
+    at: item.at,
+    caption: item.caption,
+    visualCaption: item.visualCaption,
+    visualAt: item.visualAt,
+    author: item.author,
+    kind: item.kind,
+    motion: item.motion,
+    video: item.video,
+    videoId: item.videoId,
+    durationSec: item.durationSec,
+  }
+}
+
 function rawReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'addFeed':
@@ -67,6 +89,33 @@ function rawReducer(state: AppState, action: Action): AppState {
       return { ...state, growths: [...state.growths, action.growth] }
     case 'addPhoto':
       return { ...state, photos: [action.photo, ...state.photos] }
+    case 'trashPhotos': {
+      const ids = new Set(action.photos.map((p) => p.id))
+      const trash = state.trash ?? []
+      return {
+        ...state,
+        photos: state.photos.filter((p) => !ids.has(p.id)),
+        trash: [
+          ...action.photos.map((p) => ({ ...p, deletedAt: action.deletedAt })),
+          ...trash.filter((t) => !ids.has(t.id)),
+        ].slice(0, 200),
+        heroPhotoIds: state.heroPhotoIds.filter((id) => !ids.has(id)),
+      }
+    }
+    case 'restorePhotos': {
+      const ids = new Set(action.ids)
+      const trash = state.trash ?? []
+      const restored = trash.filter((t) => ids.has(t.id)).map(toPhoto)
+      return {
+        ...state,
+        photos: [...restored, ...state.photos],
+        trash: trash.filter((t) => !ids.has(t.id)),
+      }
+    }
+    case 'dropTrash': {
+      const ids = new Set(action.ids)
+      return { ...state, trash: (state.trash ?? []).filter((t) => !ids.has(t.id)) }
+    }
     case 'addMilestone':
       return { ...state, milestones: [action.milestone, ...state.milestones] }
     case 'updatePhoto':

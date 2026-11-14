@@ -254,6 +254,10 @@ try {
     .then(async (r) => ({ status: r.status, body: await r.text() }))`)
   check('只读成员写入被拒（403）', blocked?.status === 403, JSON.stringify(blocked))
 
+  const cannotDelete = await b.evaluate(`fetch('/api/media/e2e-not-a-real-id', { method: 'DELETE' })
+    .then(async (r) => ({ status: r.status, body: await r.text() }))`)
+  check('只读成员删除照片被拒（403）', cannotDelete?.status === 403, JSON.stringify(cannotDelete))
+
   // ---------- B: 设置头像，A 端可见 ----------
   await b.goto(`${BASE}/#/profile`)
   await b.evaluate(`[...document.querySelectorAll('.family__item')].find((el) => el.textContent.includes('外婆'))?.click()`)

@@ -13,6 +13,7 @@ export type Route =
   | 'settings'
   | 'invite'
   | 'join'
+  | 'trash'
 
 const ROUTES: Route[] = [
   'home',
@@ -27,6 +28,7 @@ const ROUTES: Route[] = [
   'settings',
   'invite',
   'join',
+  'trash',
 ]
 
 const TITLES: Record<Route, string> = {
@@ -42,6 +44,7 @@ const TITLES: Record<Route, string> = {
   settings: '设置 · Nestory',
   invite: '邀请家人 · Nestory',
   join: '加入家庭 · Nestory',
+  trash: '最近删除 · Nestory',
 }
 
 function parse(hash: string): Route {

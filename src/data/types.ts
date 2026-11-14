@@ -96,6 +96,9 @@ export type Reminder = {
   vibration: boolean
 }
 
+/** 删进回收站的照片：保留原 photo 元数据 + 删除时间，恢复时原样放回。 */
+export type TrashItem = Photo & { deletedAt: number }
+
 export type FamilyMember = {
   id: string
   name: string
@@ -124,6 +127,8 @@ export type AppState = {
   growths: GrowthRecord[]
   milestones: Milestone[]
   photos: Photo[]
+  /** 最近删除：只留 7 天，恢复后回到 photos。 */
+  trash?: TrashItem[]
   /** 早于当前生日的旧记录：保留可恢复，但不参与任何展示、统计和 AI。 */
   archived?: ArchivedState
   heroPhotoIds: string[]

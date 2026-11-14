@@ -13,7 +13,8 @@ import type { Photo, PhotoMotion } from '../data/types'
 import { hasMotion, isVideoPhoto, motionOf } from '../lib/photo'
 import { isBeforeBirth } from '../lib/birth'
 import { MEDIA_GROUPS, MEDIA_LIMITS } from '../data/config'
-import { ApiError } from '../data/api'
+import { ApiError, mediaApi } from '../data/api'
+import { navigate } from '../lib/route'
 
 /** Badge for a motion clip: LIVE for live photos, length for videos. */
 async function requestCaptionTitles(src: string, hint: string): Promise<string[]> {
@@ -51,21 +52,38 @@ function KindBadge({ photo, variant }: { photo: Photo; variant?: 'cover' }) {  i
   return null
 }
 
-function AlbumPhotoCard({ photo, onOpen }: { photo: Photo; onOpen: (photo: Photo) => void }) {
+function AlbumPhotoCard({
+  photo,
+  onOpen,
+  selectable,
+  selected,
+}: {
+  photo: Photo
+  onOpen: (photo: Photo) => void
+  selectable?: boolean
+  selected?: boolean
+}) {
   const imgRef = useRef<HTMLImageElement>(null)
   const ink = usePhotoInk(imgRef)
 
   return (
     <button
-      className="album-card"
+      className={`album-card${selectable ? ' album-card--selectable' : ''}${selected ? ' is-selected' : ''}`}
       data-kind={photo.kind ?? 'photo'}
       data-motion={hasMotion(photo) ? 'true' : 'false'}
       data-photo-ink={ink ?? undefined}
+      aria-pressed={selectable ? !!selected : undefined}
+      aria-label={selectable ? `${selected ? '取消选择' : '选择'}「${photo.caption}」` : undefined}
       onClick={() => onOpen(photo)}
     >
       <img ref={imgRef} src={photo.thumb} alt={photo.caption} loading="lazy" />
       <span className="album-card__veil" />
       <KindBadge photo={photo} />
+      {selectable ? (
+        <span className={`album-card__check${selected ? ' is-on' : ''}`} aria-hidden="true">
+          {selected ? <Icon name="check" size={13} /> : null}
+        </span>
+      ) : null}
       <span className="album-card__cap">
         <b>{photo.caption}</b>
         <span>{monthDay(photo.at)}</span>
@@ -164,6 +182,11 @@ export default function AlbumPage() {
   const [draft, setDraft] = useState<AlbumDraft | null>(null)
   const [captionEdit, setCaptionEdit] = useState<{ id: string; value: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const canDelete = state.family.some((m) => m.id === state.viewerId && m.permission === 'admin')
   const [aiBusy, setAiBusy] = useState(false)
   const [aiTitles, setAiTitles] = useState<string[]>([])
   const aiSeq = useRef(0)
@@ -485,15 +508,21 @@ export default function AlbumPage() {
   }
 
   const photoCard = (p: Photo) => (
-    <AlbumPhotoCard key={p.id} photo={p} onOpen={openLightbox} />
+    <AlbumPhotoCard
+      key={p.id}
+      photo={p}
+      onOpen={selectMode ? (photo) => toggleSelect(photo.id) : openLightbox}
+      selectable={selectMode}
+      selected={selected.includes(p.id)}
+    />
   )
 
   const previewGrid = (items: Photo[]) => {
-    const shown = items.length > 4 ? items.slice(0, 3) : items
+    const shown = selectMode ? items : items.length > 4 ? items.slice(0, 3) : items
     return (
       <div className="album-grid album-grid--rest album-grid--preview">
         {shown.map(photoCard)}
-        {items.length > 4 ? (
+        {!selectMode && items.length > 4 ? (
           <AlbumMoreCard
             photo={items[3]}
             count={items.length - 3}
@@ -502,6 +531,62 @@ export default function AlbumPage() {
         ) : null}
       </div>
     )
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  const exitSelect = () => {
+    setSelectMode(false)
+    setSelected([])
+  }
+
+  const trashedIds = (photos: Photo[]) => {
+    const ids: string[] = []
+    for (const photo of photos) {
+      const match = /\/api\/media\/blob\/([A-Za-z0-9_-]+)/.exec(photo.src)
+      if (match) ids.push(match[1])
+    }
+    return ids
+  }
+
+  const deleteSelected = async () => {
+    if (!pendingDelete?.length || deleting) return
+    const chosen = pendingDelete
+    const byId = new Map(state.photos.map((p) => [p.id, p]))
+    const items = chosen.map((id) => byId.get(id)).filter((p): p is Photo => !!p)
+    setDeleting(true)
+    const removed: Photo[] = []
+    let avatarBlocked = false
+    let failed = false
+    for (const photo of items) {
+      const mediaId = trashedIds([photo])[0]
+      if (mediaId) {
+        try {
+          await mediaApi.remove(mediaId)
+        } catch (err) {
+          if (err instanceof ApiError && err.code === 'avatar_in_use') {
+            avatarBlocked = true
+            continue
+          }
+          if (!(err instanceof ApiError && err.status === 404)) {
+            failed = true
+            continue
+          }
+        }
+      }
+      removed.push(photo)
+    }
+    if (removed.length) {
+      dispatch({ type: 'trashPhotos', photos: removed, deletedAt: Date.now() })
+    }
+    setDeleting(false)
+    setPendingDelete(null)
+    exitSelect()
+    if (avatarBlocked) toast('有照片正在作为头像，先换掉头像再删')
+    else if (failed) toast('有照片没能删掉，稍后再试')
+    else if (removed.length) toast(`已移入最近删除 · ${removed.length} 项，7 天内可恢复`)
   }
 
   const groups = useMemo(() => {
@@ -664,9 +749,20 @@ export default function AlbumPage() {
             : `${visible.length} 个瞬间 · ${scope ?? ''}`
         }
         right={
-          <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
-            <Icon name="plus" size={19} />
-          </button>
+          <>
+            {canDelete && photos.length ? (
+              <button
+                type="button"
+                className="album-select-toggle"
+                onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+              >
+                {selectMode ? '完成' : '选择'}
+              </button>
+            ) : null}
+            <button className="icon-btn" aria-label="添加到相册" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={19} />
+            </button>
+          </>
         }
       />
 
@@ -755,7 +851,34 @@ export default function AlbumPage() {
           <br />
           Nestory 珍藏每一个普通的日子。
         </p>
+
+        {canDelete ? (
+          <button type="button" className="album-trash-link" onClick={() => navigate('trash', 'album')}>
+            <Icon name="trash" size={14} />
+            最近删除
+          </button>
+        ) : null}
       </div>
+
+      {selectMode ? (
+        <div className="album-select-bar">
+          <button type="button" className="album-select-bar__cancel" onClick={exitSelect}>
+            取消
+          </button>
+          <span className="album-select-bar__count">
+            {selected.length ? `已选 ${selected.length} 项` : '选择要删除的照片'}
+          </span>
+          <button
+            type="button"
+            className="album-select-bar__delete"
+            disabled={!selected.length}
+            onClick={() => setPendingDelete(selected)}
+          >
+            <Icon name="trash" size={15} />
+            移入回收站
+          </button>
+        </div>
+      ) : null}
 
       <Sheet
         open={addOpen}
@@ -963,6 +1086,45 @@ export default function AlbumPage() {
         ) : null}
       </Sheet>
 
+      <Sheet
+        open={!!pendingDelete}
+        onClose={() => {
+          if (!deleting) setPendingDelete(null)
+        }}
+        title="移入最近删除？"
+        desc="照片会保留 7 天，期间家人看不到，但你可以从「最近删除」恢复。7 天后自动彻底删除，无法找回。"
+        footer={
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              className="btn btn--quiet"
+              style={{ flex: 1 }}
+              disabled={deleting}
+              onClick={() => setPendingDelete(null)}
+            >
+              再想想
+            </button>
+            <button
+              className="btn btn--primary"
+              style={{ flex: 2 }}
+              disabled={deleting}
+              onClick={deleteSelected}
+            >
+              {deleting ? '正在移入…' : `移入回收站${pendingDelete?.length ? ` · ${pendingDelete.length} 项` : ''}`}
+            </button>
+          </div>
+        }
+      >
+        <p className="album-trash-note">
+          {pendingDelete?.length
+            ? `将移入最近删除：${pendingDelete
+                .map((id) => state.photos.find((p) => p.id === id)?.caption ?? '')
+                .filter(Boolean)
+                .slice(0, 3)
+                .join('、')}${pendingDelete.length > 3 ? ' 等' : ''}`
+            : ''}
+        </p>
+      </Sheet>
+
       <input
         ref={photoRef}
         type="file"
@@ -1102,6 +1264,18 @@ export default function AlbumPage() {
                 >
                   改标题
                 </button>
+                {canDelete ? (
+                  <button
+                    type="button"
+                    className="lightbox__edit lightbox__danger"
+                    onClick={() => {
+                      setLightboxIndex(null)
+                      setPendingDelete([lightbox.id])
+                    }}
+                  >
+                    删除
+                  </button>
+                ) : null}
               </div>
               <div className="lightbox__meta">
                 <span>

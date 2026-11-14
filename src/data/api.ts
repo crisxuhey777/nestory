@@ -79,6 +79,21 @@ export type MediaItem = {
   url: string
 }
 
+/** 回收站条目：服务端只留 7 天，前端用它显示剩余时间。 */
+export type TrashItemDto = {
+  id: string
+  kind: MediaKind
+  bytes: number
+  mime: string
+  width: number | null
+  height: number | null
+  author: string
+  createdAt: string | null
+  deletedAt: string | null
+  expiresAt: string | null
+  url: string
+}
+
 export type RegisterInput = {
   email: string
   password: string
@@ -274,6 +289,15 @@ export const mediaApi = {
   list: (): Promise<{ items: MediaItem[]; usage: MediaUsage }> =>
     request<{ items: MediaItem[]; usage: MediaUsage }>('/api/media'),
 
-  remove: (id: string): Promise<{ ok: boolean; id: string }> =>
-    request<{ ok: boolean; id: string }>(`/api/media/${id}`, { method: 'DELETE' }),
+  remove: (id: string): Promise<{ ok: boolean; id: string; days: number }> =>
+    request<{ ok: boolean; id: string; days: number }>(`/api/media/${id}`, { method: 'DELETE' }),
+
+  trash: (): Promise<{ items: TrashItemDto[]; days: number }> =>
+    request<{ items: TrashItemDto[]; days: number }>('/api/media/trash'),
+
+  restore: (id: string): Promise<{ ok: boolean; id: string; restored?: boolean; url?: string }> =>
+    request<{ ok: boolean; id: string; restored?: boolean; url?: string }>(`/api/media/${id}/restore`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
 }

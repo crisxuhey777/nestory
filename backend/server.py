@@ -277,8 +277,10 @@ class Handler(BaseHTTPRequestHandler):
                         "POST /api/ai/describe",
                         "POST /api/daily-quote",
                         "GET /api/media",
+                        "GET /api/media/trash",
                         "POST /api/media/presign",
                         "POST /api/media/{id}/confirm",
+                        "POST /api/media/{id}/restore",
                         "PUT /api/media/blob/{id}",
                         "GET /api/media/blob/{id}",
                         "DELETE /api/media/{id}",
@@ -358,6 +360,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/test-config":
             self._ok({"source": "src/data/test_config.js", "data": fixtures.as_dict()})
+            return
+
+        if path == "/api/media/trash":
+            user = self._media_user()
+            if user is None:
+                return
+            try:
+                self._ok(media_store.trash(user))
+            except accounts.ApiError as exc:
+                self._fail(exc)
             return
 
         if path == "/api/media":
@@ -453,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
         if user is None:
             return
         try:
-            row = media_store.row_for(user, media_id)
+            row = media_store.row_for(user, media_id, include_deleted=True)
         except accounts.ApiError as exc:
             self._fail(exc)
             return
@@ -599,11 +611,11 @@ class Handler(BaseHTTPRequestHandler):
         if user is None:
             return
         try:
-            media_store.remove(user, media_id)
+            result = media_store.remove(user, media_id)
         except accounts.ApiError as exc:
             self._fail(exc)
             return
-        self._ok({"ok": True, "id": media_id})
+        self._ok(result)
 
     def do_POST(self) -> None:  # noqa: N802
         self._consumed = 0
@@ -662,6 +674,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._fail(exc)
                 return
             self._ok({"id": media_id, "url": f"/api/media/blob/{media_id}"})
+            return
+
+        if path.startswith("/api/media/") and path.endswith("/restore"):
+            parts = path.split("/")
+            media_id = parts[3] if len(parts) > 4 else ""
+            user = self._media_user()
+            if user is None:
+                return
+            if not media_id:
+                self._error(404, "not_found", path)
+                return
+            try:
+                self._ok(media_store.restore(user, media_id))
+            except accounts.ApiError as exc:
+                self._fail(exc)
             return
 
         if path in ("/api/family/invite", "/api/family/join", "/api/family/member/update",
@@ -1150,6 +1177,21 @@ def main() -> int:
 
     threading.Thread(target=_prepare_db, name="db-init", daemon=True).start()
     scheduler.start()
+
+    def _trash_gc() -> None:
+        # 回收站只留 7 天：启动后先清一次，之后每 6 小时清一次。
+        while not db_state["ok"]:
+            time.sleep(5)
+        while True:
+            try:
+                removed = media_store.purge_expired()
+                if removed:
+                    print(f"  trash    : purged {removed} expired item(s)", flush=True)
+            except Exception as exc:  # noqa: BLE001 - 清理失败不能拖垮服务
+                log.warning("trash purge failed: %s", exc)
+            time.sleep(6 * 3600)
+
+    threading.Thread(target=_trash_gc, name="trash-gc", daemon=True).start()
 
     ai = llm.config()
     print("AI model", flush=True)

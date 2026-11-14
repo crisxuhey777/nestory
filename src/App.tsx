@@ -14,6 +14,7 @@ import AboutPage from './pages/About'
 import SettingsPage from './pages/Settings'
 import InvitePage from './pages/Invite'
 import JoinPage from './pages/Join'
+import TrashPage from './pages/Trash'
 
 function Shell() {
   const { route, mode, viewKey } = useRoute()
@@ -47,6 +48,7 @@ function Shell() {
         {route === 'settings' ? <SettingsPage /> : null}
         {route === 'invite' ? <InvitePage /> : null}
         {route === 'join' ? <JoinPage /> : null}
+        {route === 'trash' ? <TrashPage /> : null}
       </main>
       {isTab ? <TabBar active={route} /> : null}
       <ExitGuard route={route} />
