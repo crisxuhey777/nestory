@@ -2,7 +2,7 @@
 
 - 日期：2026-11-14
 - 依据：`REFACTOR-PLAN-2026-11-14.md` 阶段一（1.1–1.4）
-- 提交：`d8056fb`（基线快照）→ `b444474`（1.1）→ `3416e9a`（1.2）→ `edc6877`（1.3）→ `df97201`（1.4）
+- 提交：`d8056fb`（基线快照）→ `b444474`（1.1）→ `3416e9a`（1.2）→ `edc6877`（1.3）→ `df97201`（1.4）→ `36b43a1`（冲突/重置后作废排队旧快照 + e2e 报告改进）
 - 分支：`main`（工作区干净；`shots/` 与 `.dsh-vision-router` 产物保持未跟踪）
 
 ## 1. 完成的任务
@@ -70,9 +70,9 @@ node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json      → 0
 node node_modules/eslint/bin/eslint.js src _test                     → 0
 node node_modules/vitest/vitest.mjs run                              → 12 文件 58 用例通过
 python -m unittest discover -s backend/tests -t backend              → 12 OK
-node node_modules/vite/bin/vite.js build                             → JS 444.47kB / gzip 135.29 · CSS 275.35kB / gzip 80.32
+node node_modules/vite/bin/vite.js build                             → JS 444.58kB / gzip 135.34 · CSS 275.35kB / gzip 80.32
 node _e2e_autosave.mjs http://127.0.0.1:8017                         → 10/10
-node _e2e_all.mjs http://localhost:5178                              → 19/20（唯一失败 _e2e_invite，单跑 28/28，见第 9 节）
+node _e2e_all.mjs http://localhost:5178                              → 20/20 套 · 280.2s
 ```
 
 后端冒烟（补丁后端 8017，测完保留进程，未动用户的 8000）：
@@ -86,7 +86,7 @@ node _e2e_all.mjs http://localhost:5178                              → 19/20�
 ## 9. 未解决的问题
 
 1. **用户本机的 8000 后端仍是旧进程（PID 10576）**，跑的是改动前的代码：新客户端连它时 `If-Match` 被忽略（兼容），但 AI 小结会因为没有 `milestone` 字段而提示「生成失败」，407/409 逻辑也无法验证。需要重启 8000（会顺带执行 `rev` 列迁移）。
-2. `_e2e_all` 串行跑时 `_e2e_invite` 偶发 1 条失败（27/28），单跑 28/28。已确认与本阶段改动无关（邀请流程未改），疑似跨套件的 demo 账号状态残留，下阶段加一条「套件开始时重置 state」再观察。
+2. 之前 `_e2e_invite` 在全量跑里偶发 27/28：已定位为**我一边跑 e2e 一边改源码**，Vite 热更新把页面刷掉导致的假失败；不编辑代码重跑 20/20 全绿。这也说明 e2e 跑批期间不能再触发 HMR（已写进 README 的建议里）。
 3. 1.1 未按计划把 `UNSAVED_KEY` 升级成「待发快照」：现在标记只用于下次启动提示，跨会话丢失仍会发生（同一会话内的失败已由重试覆盖）。
 4. 与计划的偏差：409 错误码用 `state_conflict`（计划写 `stale_state`）；冲突后直接载入服务端版本，不做客户端并集合并。
 
@@ -105,7 +105,7 @@ node _e2e_all.mjs http://localhost:5178                              → 19/20�
 | 验收项 | 结果 |
 | --- | --- |
 | 项目可构建 | ✅ tsc 0 / build 成功 |
-| 测试通过 | ✅ 前端 58 + 后端 12 + e2e 19/20（1 例已知偶发，单跑绿） |
+| 测试通过 | ✅ 前端 58 + 后端 12 + e2e 20/20 + autosave 10/10（8017） |
 | 业务逻辑未经批准的变化 | 无；仅修 4 个缺陷，冲突与恢复语义按计划 |
 | 无新错误 | ✅ eslint 0、无 console.error 新增 |
 | 数据兼容 | ✅ 只加列不加约束；旧客户端与旧备份兼容 |
