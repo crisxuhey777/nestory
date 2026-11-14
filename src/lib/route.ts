@@ -68,15 +68,25 @@ function emit() {
 /**
  * 进入下一级：新增一条历史记录，硬件返回会先回到上一级，而不是继续堆积。
  * replace=true 用于底部 Tab 切换——同一层横向切换不应产生历史记录。
+ * params 用于带意图进入：例如首页「全部照片」→ `#/album?all=1&from=home`。
  */
-export function navigate(route: Route, from?: Route, replace = false) {
-  const next = `#/${route}${from ? `?from=${from}` : ''}`
+export function navigate(
+  route: Route,
+  from?: Route,
+  replace = false,
+  params?: Record<string, string>,
+) {
+  const query = new URLSearchParams()
+  if (from) query.set('from', from)
+  for (const [key, value] of Object.entries(params ?? {})) query.set(key, value)
+  const next = `#/${route}${query.toString() ? `?${query}` : ''}`
   if (window.location.hash === next) return
 
   trail = trail.slice(0, depth + 1)
   if (replace) {
     const nextState = { ...(history.state ?? {}) } as Record<string, unknown>
     if (nextState.nestoryExitGuard) nextState.nestoryExitGuardPath = next
+    delete nextState.nestoryNested
     history.replaceState(nextState, '', next)
     trail[depth] = route
   } else {
@@ -84,6 +94,7 @@ export function navigate(route: Route, from?: Route, replace = false) {
     const nextState = { ...(history.state ?? {}) } as Record<string, unknown>
     delete nextState.nestoryExitGuard
     delete nextState.nestoryExitGuardPath
+    delete nextState.nestoryNested
     history.pushState(nextState, '', next)
     trail.push(route)
     depth += 1

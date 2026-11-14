@@ -14,6 +14,7 @@ import { hasMotion, isVideoPhoto, motionOf } from '../lib/photo'
 import { isBeforeBirth } from '../lib/birth'
 import { MEDIA_GROUPS, MEDIA_LIMITS } from '../data/config'
 import { ApiError } from '../data/api'
+import { getHashParam } from '../lib/route'
 
 /** Badge for a motion clip: LIVE for live photos, length for videos. */
 async function requestCaptionTitles(src: string, hint: string): Promise<string[]> {
@@ -161,6 +162,12 @@ export default function AlbumPage() {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [allOpen, setAllOpen] = useState(false)
+  // 首页的两个入口带意图进入：?all=1 直接打开「全部照片」，?story=1 定位到成长时间轴。
+  const [entry] = useState(() => ({
+    all: getHashParam('all') === '1',
+    story: getHashParam('story') === '1',
+    fromHome: getHashParam('from') === 'home',
+  }))
   const [draft, setDraft] = useState<AlbumDraft | null>(null)
   const [captionEdit, setCaptionEdit] = useState<{ id: string; value: string } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -480,9 +487,34 @@ export default function AlbumPage() {
   }
 
   const closeFullGallery = () => {
+    // 从首页「全部照片」进来的：关闭即回到首页，而不是停在相册 Tab。
+    if (entry.all && entry.fromHome) {
+      history.back()
+      return
+    }
     if ((history.state as Record<string, unknown> | null)?.nestoryAlbumAll) history.back()
     else setAllOpen(false)
   }
+
+  useEffect(() => {
+    if (!entry.fromHome) return
+    // 记录「这是从首页临时进来的相册」：ExitGuard 不压哨兵，返回直接回首页。
+    const nextState = { ...((history.state ?? {}) as Record<string, unknown>), nestoryNested: true }
+    history.replaceState(nextState, '', window.location.hash)
+  }, [entry.fromHome])
+
+  useEffect(() => {
+    if (!entry.all) return
+    setAllOpen(true)
+  }, [entry.all])
+
+  useEffect(() => {
+    if (!entry.story) return
+    const timer = window.setTimeout(() => {
+      document.querySelector('.story')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 280)
+    return () => window.clearTimeout(timer)
+  }, [entry.story])
 
   const photoCard = (p: Photo) => (
     <AlbumPhotoCard key={p.id} photo={p} onOpen={openLightbox} />
