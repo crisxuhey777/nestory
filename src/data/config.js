@@ -53,11 +53,6 @@ export const HERO = {
   brandTag: 'Family Stories',
 }
 
-export const HOME = {
-  recentPhotos: 4,
-  milestones: 3,
-}
-
 export const FEED_METHODS = [
   { key: 'breast', label: '母乳亲喂', icon: 'timer' },
   { key: 'bottle', label: '瓶喂母乳', icon: 'feed' },

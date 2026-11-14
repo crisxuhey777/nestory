@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../brand/icons'
 import { NestoryMark } from '../brand/Logo'
 import AiThinking from '../components/AiThinking'
-import { SectionHead } from '../components/Common'
 import { Sheet } from '../components/Sheet'
 import { DiaperSheet, GrowthSheet, SleepSheet } from '../components/QuickSheets'
 import { FeedSheet } from '../components/FeedSheet'
@@ -17,14 +16,13 @@ import {
   isSameDay,
   minutesLabel,
   relativeFromNow,
-  shortDate,
   timeHM,
   daysUntilAnniversary,
 } from '../lib/date'
 import { diaperCountsToday, feedStats, latestGrowth, previousGrowth, sleepMinutesToday } from '../lib/stats'
 import { navigate } from '../lib/route'
 import { usePhotoInk, usePhotoInkMap } from '../lib/photoTone'
-import { API, HERO, HOME, QUICK_ACTIONS } from '../data/config'
+import { API, HERO, QUICK_ACTIONS } from '../data/config'
 
 const QUOTE_CACHE_KEY = 'nestory.dailyQuote.v1'
 
@@ -279,13 +277,11 @@ export default function HomePage() {
   const prev = previousGrowth(state.growths)
   const next = hasBirth ? daysUntilAnniversary(state.baby.birthday, new Date(now)) : null
   const albumPhotos = [...state.photos].sort((a, b) => b.at - a.at)
-  const photos = albumPhotos.slice(0, HOME.recentPhotos)
   const photoById = new Map(albumPhotos.map((photo) => [photo.id, photo]))
   const pickerTones = usePhotoInkMap(
     albumPhotos.map((photo) => ({ id: photo.id, src: photo.thumb })),
     photoSheet,
   )
-  const milestones = [...state.milestones].sort((a, b) => b.at - a.at).slice(0, HOME.milestones)
   const hasActivity =
     state.feeds.length + state.sleeps.length + state.diapers.length + state.growths.length > 0
 
@@ -553,47 +549,6 @@ export default function HomePage() {
               </button>
             </>
           )}
-        </div>
-      </section>
-
-      <section className="section" style={{ marginTop: 30 }}>
-        <SectionHead title="最近的成长瞬间" en="Recent moments" action="全部照片" onAction={() => navigate('album')} />
-        {photos.length ? (
-          <div className="strip">
-            {photos.map((p) => (
-              <button key={p.id} className="strip__item" onClick={() => navigate('album')} aria-label={p.caption}>
-                <img src={p.thumb} alt={p.caption} loading="lazy" />
-                {p.kind === 'video' ? (
-                  <span className="strip__badge">
-                    <Icon name="play" size={8} />
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <button className="home-empty" type="button" onClick={() => navigate('album')}>
-            <Icon name="camera" size={20} />
-            <span>还没有照片，去相册放进第一张</span>
-          </button>
-        )}
-      </section>
-
-      <section className="section" style={{ marginTop: 30 }}>
-        <SectionHead title="成长时间轴" en="Milestones" action="完整记录" onAction={() => navigate('growth')} />
-        <div className="story">
-          {milestones.map((m) => (
-            <div key={m.id} className="story__item">
-              <span className={`story__dot${m.kind === 'anniversary' ? ' story__dot--hollow' : ''}`} />
-              <span className="story__text">{m.title}</span>
-              <span className="story__date">{shortDate(m.at)}</span>
-            </div>
-          ))}
-          {milestones.length === 0 ? (
-            <button className="home-empty home-empty--plain" type="button" onClick={() => navigate('album')}>
-              还没有里程碑，把第一次翻身、第一颗牙记下来
-            </button>
-          ) : null}
         </div>
       </section>
 

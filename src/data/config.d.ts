@@ -57,11 +57,6 @@ export const HERO: {
   brandTag: string
 }
 
-export const HOME: {
-  recentPhotos: number
-  milestones: number
-}
-
 export const FEED_METHODS: readonly {
   key: FeedMethodKey
   label: string
